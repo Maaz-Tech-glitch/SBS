@@ -3,6 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.generics import ListAPIView
 from rest_framework.filters import OrderingFilter, SearchFilter
+from django_filters.rest_framework import DjangoFilterBackend
 
 
 from .models import Invoice
@@ -47,8 +48,9 @@ class AddItemAPIView(APIView):
 class PendingInvoicesAPIView(ListAPIView):
     serializer_class = InvoiceListSerializer
     permission_classes = [IsAuthenticated]
-    filter_backends = [OrderingFilter, SearchFilter]
-    ordering_fields = ['created_at', 'total', 'status']  
+    filter_backends = [OrderingFilter, SearchFilter, DjangoFilterBackend,]
+    ordering_fields = ['created_at', 'total']  
+    filterset_fields = ["status"]
     ordering = ['-created_at']  
     search_fields = ['customer_name', 'id'] 
     def get_queryset(self):
@@ -57,8 +59,6 @@ class PendingInvoicesAPIView(ListAPIView):
         if status_param:
             queryset = queryset.filter(status=status_param.upper())
         return queryset
-    
-    
 
 
 class CompleteSaleAPIView(APIView):

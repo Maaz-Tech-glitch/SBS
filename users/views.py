@@ -76,17 +76,23 @@ class CreateShopkeeperAPIView(APIView):
         serializer.save()
         return Response({"message": "Shopkeeper Created Successfully"}, status=status.HTTP_201_CREATED)
 
-
 class UserListAPIView(APIView):
     permission_classes = [IsAuthenticated, IsAdmin]
     def get(self, request):
         users = User.objects.all()
+        search_param = request.query_params.get("search")
+        if search_param:
+            users = users.filter(username__icontains=search_param)
+        role_param = request.query_params.get("role")
+        if role_param:
+            users = users.filter(role=role_param.lower())
+        ordering_param = request.query_params.get("ordering")
+        if ordering_param in ("id", "-id", "username", "-username"):
+            users = users.order_by(ordering_param)
         paginator = CustomPagination()
         paginated_users = paginator.paginate_queryset(users, request)
         serializer = UserSerializer(paginated_users, many=True)
         return paginator.get_paginated_response(serializer.data)
-
-
 class UserDetailAPIView(RetrieveUpdateDestroyAPIView):
     queryset = User.objects.all()
     serializer_class = UserSerializer
