@@ -1,3 +1,4 @@
+from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -12,7 +13,6 @@ from .serializers import (
     InvoiceDetailSerializer,
     InvoiceListSerializer,
     CompleteSaleSerializer,
-    CancelInvoiceSerializer,
     AddItemSerializer,
 )
 from .services import (
@@ -62,13 +62,12 @@ class PendingInvoicesAPIView(ListAPIView):
 
 
 class CompleteSaleAPIView(APIView):
-    """'Complete' button — finalizes the bill and deducts stock."""
     permission_classes = [IsAuthenticated]
-    def post(self, request):
+    def post(self, request, pk):
         serializer = CompleteSaleSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         invoice = complete_sale(
-            invoice_id=serializer.validated_data["invoice_id"],
+            invoice_id=pk,
             payment_method=serializer.validated_data["payment_method"],
             user=request.user,
         )
@@ -76,13 +75,10 @@ class CompleteSaleAPIView(APIView):
 
 
 class CancelInvoiceAPIView(APIView):
-    """'Cancel' button — closes the bill without charging or touching stock."""
     permission_classes = [IsAuthenticated]
-    def post(self, request):
-        serializer = CancelInvoiceSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+    def post(self, request, pk):
         invoice = cancel_invoice(
-            invoice_id=serializer.validated_data["invoice_id"],
+            invoice_id=pk,
             user=request.user,
         )
         return Response(InvoiceSerializer(invoice).data)
@@ -90,18 +86,21 @@ class CancelInvoiceAPIView(APIView):
 
 class GenerateInvoicePDF(APIView):
     permission_classes = [IsAuthenticated]
-    def get(self, request, invoice_id):
-        invoice = Invoice.objects.get(id=invoice_id)
+    def post(self, request, pk):
+        invoice = Invoice.objects.get(id=pk)   
         if invoice.shopkeeper != request.user:
             return Response({"error": "Unauthorized."}, status=403)
         file_name = generate_invoice_pdf(invoice)
-        return Response({"message": "PDF generated successfully.", "file": file_name})
+        return Response(
+            {"message": "PDF generated successfully.", "file": file_name},
+            status=status.HTTP_201_CREATED
+        )
 
 
 class GenerateThermalReceipt(APIView):
     permission_classes = [IsAuthenticated]
-    def get(self, request, invoice_id):
-        invoice = Invoice.objects.get(id=invoice_id)
+    def get(self, request, pk):
+        invoice = Invoice.objects.get(id=pk)  
         if invoice.shopkeeper != request.user:
             return Response({"error": "Unauthorized"}, status=403)
         receipt = generate_thermal_receipt(invoice)

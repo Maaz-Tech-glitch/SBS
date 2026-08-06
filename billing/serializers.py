@@ -105,9 +105,6 @@ class InvoiceListSerializer(serializers.ModelSerializer):
 
 
 class CompleteSaleSerializer(serializers.Serializer):
-    invoice_id = serializers.IntegerField()
     payment_method = serializers.ChoiceField(choices=["CASH", "CARD", "ONLINE"])
 
 
-class CancelInvoiceSerializer(serializers.Serializer):
-    invoice_id = serializers.IntegerField()
