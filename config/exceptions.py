@@ -4,6 +4,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.http import Http404
 
 
+
 def custom_exception_handler(exc, context):
     response = exception_handler(exc, context)
     if response is not None:
@@ -14,5 +15,31 @@ def custom_exception_handler(exc, context):
         return Response({"error": "Requested item not found."}, status=404)
     return Response(
         {"error": "Something went wrong. Please try again later."},
+        status=500
+    )
+    
+
+
+def custom_exception_handler(exc, context):
+    response = exception_handler(exc, context)
+    if response is not None:
+        return response
+    if hasattr(exc, 'status_code') and hasattr(exc, 'detail'):
+        return Response(
+            {"error": exc.detail},
+            status=exc.status_code
+        )
+    if isinstance(exc, ObjectDoesNotExist):
+        return Response(
+            {"error": "Requested resource not found"},
+            status=404
+        )
+    if isinstance(exc, Http404):
+        return Response(
+            {"error": "Not found"},
+            status=404
+        )
+    return Response(
+        {"error": "Internal server error"},
         status=500
     )

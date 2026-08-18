@@ -2,6 +2,8 @@ import uuid
 from django.db import models
 from users.models import User
 from products.models import Product
+from .strategies import DiscountFactory
+from decimal import Decimal
 
 
 class Invoice(models.Model):
@@ -44,9 +46,22 @@ class Invoice(models.Model):
         if is_new and self.invoice_number.startswith("TEMP-"):
             self.invoice_number = f"INV-{self.pk:06d}"
             super().save(update_fields=["invoice_number"])
+    def recalculate_totals(self):
+        total = sum((item.total_price for item in self.items.all()), Decimal("0.00"))
+        self.total_amount = total
 
+        discount = self.discount or Decimal("0.00")
+        if discount < 0:
+            discount = Decimal("0.00")
+
+        strategy = DiscountFactory.get(self.discount_type)
+        self.final_amount = strategy.apply(total, discount)
+        self.discount = discount
+        self.save(update_fields=["total_amount", "discount", "final_amount", "updated_at"])
+        return self
     def __str__(self):
         return f"{self.invoice_number} ({self.customer_name or 'No Name'})"
+    
 
 
 class InvoiceItem(models.Model):

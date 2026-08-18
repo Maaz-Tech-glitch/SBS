@@ -6,32 +6,23 @@ from rest_framework.generics import ListAPIView
 from rest_framework.filters import OrderingFilter, SearchFilter
 from django_filters.rest_framework import DjangoFilterBackend
 
-
-from .models import Invoice
 from .serializers import (
-    InvoiceSerializer,
-    InvoiceDetailSerializer,
-    InvoiceListSerializer,
-    CompleteSaleSerializer,
-    AddItemSerializer,
+    InvoiceSerializer, InvoiceDetailSerializer, InvoiceListSerializer,
+    CompleteSaleSerializer, AddItemSerializer,
 )
-from .services import (
-    complete_sale,
-    cancel_invoice,
-    generate_invoice_pdf,
-    generate_thermal_receipt,
-    AddItem,
-    list_pending_invoices,
-)
+from .services import InvoiceService, ReceiptService
+from .repositories import InvoiceRepository
+from .services import InvoiceOwnershipService
 
 
 class AddItemAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
     def post(self, request):
         serializer = AddItemSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        invoice = AddItem(
+        invoice = InvoiceService.add_item(
             invoice_id=data.get("invoice_id"),
             customer_name=data.get("customer_name"),
             product_id=data.get("product_id"),
@@ -48,25 +39,23 @@ class AddItemAPIView(APIView):
 class PendingInvoicesAPIView(ListAPIView):
     serializer_class = InvoiceListSerializer
     permission_classes = [IsAuthenticated]
-    filter_backends = [OrderingFilter, SearchFilter, DjangoFilterBackend,]
-    ordering_fields = ['created_at', 'total']  
+    filter_backends = [OrderingFilter, SearchFilter, DjangoFilterBackend]
+    ordering_fields = ["created_at", "total_amount"]
     filterset_fields = ["status"]
-    ordering = ['-created_at']  
-    search_fields = ['customer_name', 'id'] 
+    ordering = ["-created_at"]
+    search_fields = ["customer_name", "id"]
+
     def get_queryset(self):
-        queryset = list_pending_invoices(self.request.user)
-        status_param = self.request.query_params.get("status")
-        if status_param:
-            queryset = queryset.filter(status=status_param.upper())
-        return queryset
+        return InvoiceService.list_pending(self.request.user)
 
 
 class CompleteSaleAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
     def post(self, request, pk):
         serializer = CompleteSaleSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        invoice = complete_sale(
+        invoice = InvoiceService.complete_sale(
             invoice_id=pk,
             payment_method=serializer.validated_data["payment_method"],
             user=request.user,
@@ -76,32 +65,30 @@ class CompleteSaleAPIView(APIView):
 
 class CancelInvoiceAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
     def post(self, request, pk):
-        invoice = cancel_invoice(
-            invoice_id=pk,
-            user=request.user,
-        )
+        invoice = InvoiceService.cancel(invoice_id=pk, user=request.user)
         return Response(InvoiceSerializer(invoice).data)
 
 
-class GenerateInvoicePDF(APIView):
+class GenerateInvoicePDFAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
     def post(self, request, pk):
-        invoice = Invoice.objects.get(id=pk)   
-        if invoice.shopkeeper != request.user:
-            return Response({"error": "Unauthorized."}, status=403)
-        file_name = generate_invoice_pdf(invoice)
+        invoice = InvoiceRepository.get_by_id(pk)
+        InvoiceOwnershipService.ensure_owner(invoice, request.user)
+        file_name = ReceiptService.generate_pdf(invoice)
         return Response(
             {"message": "PDF generated successfully.", "file": file_name},
-            status=status.HTTP_201_CREATED
+            status=status.HTTP_201_CREATED,
         )
 
 
-class GenerateThermalReceipt(APIView):
+class GenerateThermalReceiptAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
     def get(self, request, pk):
-        invoice = Invoice.objects.get(id=pk)  
-        if invoice.shopkeeper != request.user:
-            return Response({"error": "Unauthorized"}, status=403)
-        receipt = generate_thermal_receipt(invoice)
+        invoice = InvoiceRepository.get_by_id(pk)
+        InvoiceOwnershipService.ensure_owner(invoice, request.user)
+        receipt = ReceiptService.generate_thermal_receipt(invoice)
         return Response({"receipt": receipt})

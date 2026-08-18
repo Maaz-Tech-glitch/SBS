@@ -57,11 +57,6 @@ class ProductViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="restock")
     def restock(self, request, pk=None):
         serializer = RestockProductSerializer(data=request.data)
-        if serializer.is_valid():
-            updated_product = restock_product(
-                pk,
-                serializer.validated_data["quantity"],
-            )
-            return Response(ProductSerializer(updated_product).data, status=status.HTTP_200_OK)
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
+        updated_product = restock_product(pk, serializer.validated_data["quantity"])
+        return Response(ProductSerializer(updated_product).data, status=status.HTTP_200_OK)
