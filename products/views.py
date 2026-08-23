@@ -5,6 +5,7 @@ from rest_framework.decorators import action
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter 
 import django_filters
+from subscriptions.permissions import IsSubscriptionActive
 
 from .models import Category, Product
 from .serializers import CategorySerializer, ProductSerializer, RestockProductSerializer
@@ -15,7 +16,7 @@ from .services import restock_product, low_stock_products, out_of_stock_products
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all().order_by("-id")
     serializer_class = CategorySerializer
-    permission_classes = [IsAuthenticated, IsAdminOrShopkeeper]
+    permission_classes = [IsAuthenticated, IsAdminOrShopkeeper , IsSubscriptionActive]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["name"]
     search_fields = ["name", "description"]
@@ -33,7 +34,7 @@ class ProductFilter(django_filters.FilterSet):
 
 class ProductViewSet(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated , IsSubscriptionActive]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = ProductFilter
     search_fields = ["name", "category__name", "barcode", "description"]
@@ -49,7 +50,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             return out_of_stock_products()
         return queryset
     def get_permissions(self):
-        permissions = [IsAuthenticated(), IsAdminOrShopkeeper()]
+        permissions = [IsAuthenticated(), IsAdminOrShopkeeper(), IsSubscriptionActive()]
         if self.request.method == "DELETE":
             permissions.append(IsAdminForDelete())
         return permissions

@@ -3,10 +3,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .serializers import DailySalesReportSerializer, MonthlySalesReportSerializer, YearlySalesReportSerializer
 from .services import SalesReportService
-
+from subscriptions.permissions import IsSubscriptionActive
 
 class DailySalesReportAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated , IsSubscriptionActive]
 
     def get(self, request):
         data = SalesReportService.daily(request.user)
@@ -14,7 +14,7 @@ class DailySalesReportAPIView(APIView):
 
 
 class MonthlySalesReportAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated , IsSubscriptionActive]
 
     def get(self, request):
         data = SalesReportService.monthly(request.user)
@@ -22,7 +22,7 @@ class MonthlySalesReportAPIView(APIView):
 
 
 class YearlySalesReportAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated , IsSubscriptionActive]
 
     def get(self, request):
         data = SalesReportService.yearly(request.user)

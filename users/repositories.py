@@ -3,12 +3,12 @@
 
 from django.utils import timezone
 from datetime import timedelta
-from .models import User, PasswordResetOTP
+from .models import User, PasswordResetOTP , EmailVerificationOTP
 from .exceptions import (
     UserNotFoundException,
     InvalidOTPException,
     OTPExpiredException,
-    RateLimitException
+    RateLimitException, 
 )
 
 class UserRepository:    
@@ -71,3 +71,31 @@ class OTPRepository:
     def delete_old(user):
         """Delete old unused OTPs"""
         PasswordResetOTP.objects.filter(user=user, is_used=False).delete()
+        
+        
+
+
+class EmailOTPRepository:
+    @staticmethod
+    def create(user, otp):
+        return EmailVerificationOTP.objects.create(user=user, otp=otp)
+
+    @staticmethod
+    def get_valid(user, otp):
+        try:
+            otp_obj = EmailVerificationOTP.objects.get(user=user, otp=otp, is_used=False)
+            if otp_obj.is_expired():
+                raise OTPExpiredException()
+            return otp_obj
+        except EmailVerificationOTP.DoesNotExist:
+            raise InvalidOTPException()
+
+    @staticmethod
+    def check_rate_limit(user):
+        recent = EmailVerificationOTP.objects.get_recent(user, minutes=1).exists()
+        if recent:
+            raise RateLimitException()
+
+    @staticmethod
+    def delete_old(user):
+        EmailVerificationOTP.objects.filter(user=user, is_used=False).delete()

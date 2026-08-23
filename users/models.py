@@ -31,7 +31,8 @@ class User(AbstractUser):
         ('admin', 'Admin'),
         ('shopkeeper', 'Shopkeeper'),
     )
-    
+    tenant = models.ForeignKey('tenants.Tenant', on_delete=models.CASCADE, related_name='users',null=True, blank=True)
+    is_email_verified = models.BooleanField(default=False)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='shopkeeper')
     phone = models.CharField(max_length=15, blank=True, null=True )
     objects = UserManager()
@@ -42,7 +43,7 @@ class User(AbstractUser):
     
     def change_password(self, new_password):
         self.set_password(new_password)
-        self.save(update_fields=['password', 'updated_at'])
+        self.save(update_fields=['password'])
     
     def update_profile(self, **kwargs):
         allowed_fields = ['email', 'phone', 'first_name', 'last_name']
@@ -81,5 +82,26 @@ class PasswordResetOTP(models.Model):
     
     def __str__(self):
         return f"{self.user.username} - OTP"    
+    class Meta:
+        ordering = ['-created_at']
+        
+class EmailVerificationOTP(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="verification_otps")
+    otp = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+    objects = OTPManager()   # same generic manager reuse ho raha hai
+    def is_expired(self):
+        return timezone.now() > self.expires_at
+    def mark_as_used(self):
+        self.is_used = True
+        self.save(update_fields=['is_used'])
+    def save(self, *args, **kwargs):
+        if not self.expires_at:
+            self.expires_at = timezone.now() + timedelta(minutes=5)
+        super().save(*args, **kwargs)
+    def __str__(self):
+        return f"{self.user.username} - Verification OTP"
     class Meta:
         ordering = ['-created_at']

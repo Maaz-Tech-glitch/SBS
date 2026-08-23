@@ -1,6 +1,3 @@
-# OCP: Open/Closed Principle
-# New auth methods add karne ke liye sirf naya strategy class banao
-
 from abc import ABC, abstractmethod
 from django.contrib.auth import authenticate
 from .repositories import UserRepository
@@ -33,19 +30,15 @@ class UsernamePasswordStrategy(AuthenticationStrategy):
 
 class EmailPasswordStrategy(AuthenticationStrategy):
     """Email/password authentication"""
-    
-    def authenticate(self, email, password, **kwargs):
-        """Authenticate with email/password"""
+    def authenticate(self, username, password, **kwargs):
+        """Authenticate with email/password (username param mein email aata hai)"""
         try:
-            user = UserRepository.get_by_email(email)
+            user = UserRepository.get_by_email(username)
         except UserNotFoundException:
             raise InvalidCredentialsException()
-
         if not user.check_password(password):
             raise InvalidCredentialsException()
-
         return user
-
 
 class AuthenticationFactory:
     """Factory for creating authentication strategies - OCP"""

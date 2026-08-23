@@ -85,3 +85,20 @@ class RateLimitException(PasswordResetException):
     """Rate limit exceeded"""
     status_code = 429
     message = "Please wait 1 minute before requesting another OTP"
+    
+class UserAlreadyVerifiedException(UserException):
+    status_code = 409
+    message = "This account is already verified"
+    
+class UsernameAlreadyExistsException(UserException):
+    status_code = 409
+    message = "Username already taken"
+
+
+class EmailAlreadyExistsException(UserException):
+    status_code = 409
+    message = "Email already registered"
+    
+class UserLimitExceededException(UserException):
+    status_code = 403
+    message = "Maximum staff users reached for your current plan"

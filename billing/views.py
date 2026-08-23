@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.generics import ListAPIView
 from rest_framework.filters import OrderingFilter, SearchFilter
 from django_filters.rest_framework import DjangoFilterBackend
+from subscriptions.permissions import IsSubscriptionActive
 
 from .serializers import (
     InvoiceSerializer, InvoiceDetailSerializer, InvoiceListSerializer,
@@ -16,7 +17,7 @@ from .services import InvoiceOwnershipService
 
 
 class AddItemAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated , IsSubscriptionActive]
 
     def post(self, request):
         serializer = AddItemSerializer(data=request.data)
@@ -38,7 +39,7 @@ class AddItemAPIView(APIView):
 
 class PendingInvoicesAPIView(ListAPIView):
     serializer_class = InvoiceListSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated , IsSubscriptionActive]
     filter_backends = [OrderingFilter, SearchFilter, DjangoFilterBackend]
     ordering_fields = ["created_at", "total_amount"]
     filterset_fields = ["status"]
@@ -50,7 +51,7 @@ class PendingInvoicesAPIView(ListAPIView):
 
 
 class CompleteSaleAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated , IsSubscriptionActive]
 
     def post(self, request, pk):
         serializer = CompleteSaleSerializer(data=request.data)
@@ -64,7 +65,7 @@ class CompleteSaleAPIView(APIView):
 
 
 class CancelInvoiceAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated , IsSubscriptionActive]
 
     def post(self, request, pk):
         invoice = InvoiceService.cancel(invoice_id=pk, user=request.user)
@@ -72,7 +73,7 @@ class CancelInvoiceAPIView(APIView):
 
 
 class GenerateInvoicePDFAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated , IsSubscriptionActive]
 
     def post(self, request, pk):
         invoice = InvoiceRepository.get_by_id(pk)
@@ -85,7 +86,7 @@ class GenerateInvoicePDFAPIView(APIView):
 
 
 class GenerateThermalReceiptAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated , IsSubscriptionActive]
 
     def get(self, request, pk):
         invoice = InvoiceRepository.get_by_id(pk)

@@ -3,9 +3,9 @@ from django.conf import settings
 from django.core.mail import send_mail
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
-from .repositories import UserRepository, OTPRepository
+from .repositories import UserRepository, OTPRepository , EmailOTPRepository
 from .strategies import AuthenticationFactory
-from .exceptions import InvalidTokenException
+from .exceptions import InvalidTokenException , UsernameAlreadyExistsException, EmailAlreadyExistsException
 
 def generate_otp():
     """Generate random 6-digit OTP"""
@@ -30,6 +30,8 @@ def send_otp_email(user, otp):
         fail_silently=False,
     )
 
+
+
 class BaseService:
     
     @staticmethod
@@ -46,24 +48,26 @@ class AuthenticationService(BaseService):
         strategy = AuthenticationFactory.get_strategy(strategy_type)
         return strategy.authenticate(username=username, password=password)
 
-class TokenService(BaseService):    
+
+
+class TokenService(BaseService):
     @staticmethod
     def generate_tokens(user):
         refresh = RefreshToken.for_user(user)
         return {
             "access": str(refresh.access_token),
             "refresh": str(refresh)
-        }    
+        }
+
     @staticmethod
     def validate_refresh_token(refresh_token):
         if not refresh_token:
-            raise InvalidTokenException("Refresh token required") 
+            raise InvalidTokenException("Refresh token required")
         try:
             token = RefreshToken(refresh_token)
             return token
         except Exception:
             raise InvalidTokenException()
-
 class LogoutService(BaseService):
     @staticmethod
     def logout_user(refresh_token):
@@ -75,6 +79,7 @@ class ResponseFormatterService(BaseService):
     @staticmethod
     def format_user_data(user):
         return {
+            "tenant_id": user.tenant_id,
             "id": user.id,
             "username": user.username,
             "email": user.email,
@@ -111,3 +116,89 @@ class PasswordResetConfirmService(BaseService):
         user.change_password(new_password)
         otp_obj.mark_as_used()
         return {"message": "Password Reset Successfully"}
+    
+def send_verification_email(user, otp):
+    subject = "SBS POS - Verify Your Email"
+    message = f"""
+    Hello {user.username},
+    Your email verification OTP is:
+    {otp}
+    This OTP will expire in 5 minutes.
+    """
+    send_mail(
+        subject=subject,
+        message=message,
+        from_email=settings.EMAIL_HOST_USER,
+        recipient_list=[user.email],
+        fail_silently=False,
+    )
+
+
+class SignupService(BaseService):
+    @staticmethod
+    def register(username, email, password, phone=""):
+        from .models import User
+        
+        if User.objects.filter(username=username).exists():
+            raise UsernameAlreadyExistsException()
+        if User.objects.filter(email=email).exists():
+            raise EmailAlreadyExistsException()
+        user = User.objects.create_user(username=username, email=email, password=password,phone=phone, role="admin")
+        otp = generate_otp()
+        EmailOTPRepository.create(user, otp)
+        send_verification_email(user, otp)
+        return {"message": "Account created. OTP sent to your email for verification."}
+
+
+class EmailVerificationService(BaseService):
+    @staticmethod
+    def verify(email, otp):
+        from .exceptions import UserAlreadyVerifiedException
+        user = UserRepository.get_by_email(email)
+        if user.is_email_verified:
+            raise UserAlreadyVerifiedException()
+
+        otp_obj = EmailOTPRepository.get_valid(user, otp)
+        user.is_email_verified = True
+        user.save(update_fields=["is_email_verified"])
+        otp_obj.mark_as_used()
+
+        tokens = TokenService.generate_tokens(user)
+
+        return {
+            "message": "Email verified successfully",
+            "access": tokens["access"],
+            "refresh": tokens["refresh"],
+            "user": ResponseFormatterService.format_user_data(user),
+        }
+
+    @staticmethod
+    def resend_otp(email):
+        from .exceptions import UserAlreadyVerifiedException
+        user = UserRepository.get_by_email(email)
+        if user.is_email_verified:
+            raise UserAlreadyVerifiedException()
+        EmailOTPRepository.check_rate_limit(user)
+        EmailOTPRepository.delete_old(user)
+        otp = generate_otp()
+        EmailOTPRepository.create(user, otp)
+        send_verification_email(user, otp)
+        return {"message": "OTP resent successfully"}
+    
+def send_verification_email(user, otp):
+    subject = "SBS POS - Verify Your Email"
+    message = f"""
+    Hello {user.username},
+    Your email verification OTP is:
+    {otp}
+    This OTP will expire in 5 minutes.
+    """
+    send_mail(
+        subject=subject,
+        message=message,
+        from_email=settings.EMAIL_HOST_USER,
+        recipient_list=[user.email],
+        fail_silently=False,
+    )
+
+
