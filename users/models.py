@@ -35,6 +35,7 @@ class User(AbstractUser):
     is_email_verified = models.BooleanField(default=False)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='shopkeeper')
     phone = models.CharField(max_length=15, blank=True, null=True )
+    email = models.EmailField(unique=True)
     objects = UserManager()
     def is_admin(self):
         return self.role == 'admin'    
