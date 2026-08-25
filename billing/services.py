@@ -31,7 +31,7 @@ class PricingService:
 class InvoiceOwnershipService:
     @staticmethod
     def ensure_owner(invoice, user):
-        if invoice.shopkeeper != user:
+        if invoice.tenant != user.tenant:
             raise UnauthorizedInvoiceActionException()
 
     @staticmethod
@@ -74,18 +74,17 @@ class InvoiceItemService:
 
 class InvoiceService:
     @staticmethod
-    def get_or_create_draft(invoice_id, shopkeeper):
+    def get_or_create_draft(invoice_id, user):
         if invoice_id:
             invoice = InvoiceRepository.get_locked_by_id(invoice_id)
-            InvoiceOwnershipService.ensure_owner(invoice, shopkeeper)
+            InvoiceOwnershipService.ensure_owner(invoice, user)
             InvoiceOwnershipService.ensure_pending(invoice)
             return invoice
-        return InvoiceRepository.create(shopkeeper)
+        return InvoiceRepository.create(tenant=user.tenant, shopkeeper=user)
 
     @staticmethod
-    def list_pending(shopkeeper):
-        return InvoiceRepository.list_by_shopkeeper(shopkeeper)
-
+    def list_pending(user):
+        return InvoiceRepository.list_by_tenant(user.tenant)
     @staticmethod
     def get_detail(invoice_id):
         return InvoiceRepository.get_by_id(invoice_id)
@@ -93,9 +92,9 @@ class InvoiceService:
     @staticmethod
     def add_item(*, invoice_id=None, customer_name=None, product_id=None, quantity=1,
                 discount=None, discount_type=None, invoice_discount=None,
-                invoice_discount_type=None, shopkeeper):
+                invoice_discount_type=None, user):
         with transaction.atomic():
-            invoice = InvoiceService.get_or_create_draft(invoice_id, shopkeeper)
+            invoice = InvoiceService.get_or_create_draft(invoice_id, user)
 
             if customer_name is not None:
                 invoice.customer_name = customer_name

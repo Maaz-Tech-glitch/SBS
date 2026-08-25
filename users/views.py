@@ -362,13 +362,15 @@ class UserListCreateAPIView(ListCreateAPIView):
 
 
 class UserDetailAPIView(RetrieveUpdateDestroyAPIView):
-    """Get, update, delete user - tenant-scoped."""
+    """Get, update, delete user - sirf apne tenant ke users (jo khud create kiye)."""
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated, IsAdmin]
 
     def get_queryset(self):
-        return User.objects.filter(tenant=self.request.user.tenant)
-
+        tenant = self.request.user.tenant
+        if not tenant:
+            return User.objects.none()
+        return User.objects.filter(tenant=tenant)
 
 # ========== PASSWORD RESET VIEWS ==========
 

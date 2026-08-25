@@ -9,3 +9,4 @@ class ProductNotFoundException(ProductException):
 class CategoryNotFoundException(ProductException):
     status_code = 404
     message = "Category not found"
+    

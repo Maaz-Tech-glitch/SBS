@@ -20,16 +20,17 @@ class InvoiceRepository:
             raise InvoiceNotFoundException()
 
     @staticmethod
-    def create(shopkeeper):
-        return Invoice.objects.create(shopkeeper=shopkeeper)
+    def create(tenant, shopkeeper):
+        return Invoice.objects.create(tenant=tenant, shopkeeper=shopkeeper)
 
     @staticmethod
-    def list_by_shopkeeper(shopkeeper):
-        return Invoice.objects.filter(shopkeeper=shopkeeper).order_by("-created_at")
+    def list_by_tenant(tenant):
+        return Invoice.objects.filter(tenant=tenant).order_by("-created_at")
+
     @staticmethod
-    def get_completed_in_range(shopkeeper, start_date, end_date):
+    def get_completed_in_range(tenant, start_date, end_date):
         return Invoice.objects.filter(
-            shopkeeper=shopkeeper, status="COMPLETED",
+            tenant=tenant, status="COMPLETED",
             created_at__date__gte=start_date, created_at__date__lte=end_date,
         )
 

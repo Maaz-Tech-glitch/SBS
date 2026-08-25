@@ -23,7 +23,7 @@ class Invoice(models.Model):
         ("FIXED", "Fixed"),
         ("PERCENTAGE", "Percentage"),
     )
-
+    tenant = models.ForeignKey('tenants.Tenant', on_delete=models.CASCADE, related_name="invoices")
     invoice_number = models.CharField(max_length=40, unique=True)
     customer_name = models.CharField(max_length=150, blank=True, default="")
     shopkeeper = models.ForeignKey(User, on_delete=models.CASCADE, related_name="invoices")

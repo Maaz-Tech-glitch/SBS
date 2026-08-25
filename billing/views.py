@@ -32,7 +32,7 @@ class AddItemAPIView(APIView):
             discount_type=data.get("discount_type"),
             invoice_discount=data.get("invoice_discount"),
             invoice_discount_type=data.get("invoice_discount_type"),
-            shopkeeper=request.user,
+            user=request.user, 
         )
         return Response(InvoiceDetailSerializer(invoice).data)
 

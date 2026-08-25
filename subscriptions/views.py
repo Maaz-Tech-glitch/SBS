@@ -20,6 +20,11 @@ class PlanListAPIView(ListAPIView):
 
 class SubscribeAPIView(APIView):
     permission_classes = [IsAuthenticated , IsAdmin]
+    
+    def get(self, request):
+        subscriptions = SubscriptionService.list_history(request.user.tenant)
+        serializer = SubscriptionSerializer(subscriptions, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     def post(self, request):
         serializer = SubscribeSerializer(data=request.data)
