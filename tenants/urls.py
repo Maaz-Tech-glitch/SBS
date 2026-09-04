@@ -1,6 +1,6 @@
 from django.urls import path
-from .views import ShopSetupAPIView
+from .views import TenantAPIView
 
 urlpatterns = [
-    path("shop/", ShopSetupAPIView.as_view(), name="shop-setup"),
+    path("", TenantAPIView.as_view(), name="tenant-me"),
 ]

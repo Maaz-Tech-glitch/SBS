@@ -80,6 +80,7 @@ class ResponseFormatterService(BaseService):
     def format_user_data(user):
         return {
             "tenant_id": user.tenant_id,
+            "tenant_name": user.tenant.name if user.tenant else None,
             "id": user.id,
             "username": user.username,
             "email": user.email,
@@ -134,16 +135,41 @@ def send_verification_email(user, otp):
     )
 
 
+# class SignupService(BaseService):
+#     @staticmethod
+#     def register(username, email, password, phone=""):
+#         from .models import User
+        
+#         if User.objects.filter(username=username).exists():
+#             raise UsernameAlreadyExistsException()
+#         if User.objects.filter(email=email).exists():
+#             raise EmailAlreadyExistsException()
+#         user = User.objects.create_user(username=username, email=email, password=password,phone=phone, role="admin")
+#         otp = generate_otp()
+#         EmailOTPRepository.create(user, otp)
+#         send_verification_email(user, otp)
+#         return {"message": "Account created. OTP sent to your email for verification."}
 class SignupService(BaseService):
     @staticmethod
-    def register(username, email, password, phone=""):
+    def register(shop_name, username, email, password, phone="", shop_address="", business_type=""):
+        from django.db import transaction
         from .models import User
-        
+        from tenants.services import TenantService
+
         if User.objects.filter(username=username).exists():
             raise UsernameAlreadyExistsException()
         if User.objects.filter(email=email).exists():
             raise EmailAlreadyExistsException()
-        user = User.objects.create_user(username=username, email=email, password=password,phone=phone, role="admin")
+
+        with transaction.atomic():
+            tenant = TenantService.create_tenant(
+                name=shop_name, email=email, phone=phone,
+                address=shop_address, business_type=business_type,
+            )
+            user = User.objects.create_user(
+                username=username, email=email, password=password,
+                phone=phone, role="admin", tenant=tenant,
+            )
         otp = generate_otp()
         EmailOTPRepository.create(user, otp)
         send_verification_email(user, otp)
@@ -169,7 +195,7 @@ class EmailVerificationService(BaseService):
             "message": "Email verified successfully",
             "access": tokens["access"],
             "refresh": tokens["refresh"],
-            "user": ResponseFormatterService.format_user_data(user),
+            "User": ResponseFormatterService.format_user_data(user),
         }
 
     @staticmethod

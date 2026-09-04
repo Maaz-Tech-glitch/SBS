@@ -3,25 +3,24 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .serializers import ShopSetupSerializer, TenantSerializer
+from .serializers import  TenantSerializer, TenantUpdateSerializer
 from .services import TenantService
 
 
-class ShopSetupAPIView(APIView):
+class TenantAPIView(APIView):
+    """Logged-in user apni shop ki details dekh/update kar sake."""
     permission_classes = [IsAuthenticated]
 
-    def post(self, request):
-        serializer = ShopSetupSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
+    def get(self, request):
+        tenant = request.user.tenant
+        return Response(TenantSerializer(tenant).data)
 
-        tenant = TenantService.setup_shop(
-            user=request.user,
-            name=data["shop_name"],
-            address=data.get("shop_address", ""),
-            business_type=data.get("business_type", ""),
-        )
+    def patch(self, request):
+        tenant = request.user.tenant
+        serializer = TenantUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        updated_tenant = TenantService.update_tenant(tenant, **serializer.validated_data)
         return Response(
-            {"message": "Shop setup completed successfully", "tenant": TenantSerializer(tenant).data},
-            status=status.HTTP_201_CREATED,
+            {"message": "Shop details updated successfully", "data": TenantSerializer(updated_tenant).data},
+            status=status.HTTP_200_OK,
         )

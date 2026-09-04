@@ -97,7 +97,15 @@ def validate_email_exists(email):
         pass
 
 
+# class SignupSerializer(serializers.Serializer):
+#     username = serializers.CharField(max_length=150)
+#     email = serializers.EmailField(validators=[validate_email_exists])
+#     password = serializers.CharField(write_only=True, min_length=8)
+#     phone = serializers.CharField(required=False, allow_blank=True, max_length=15)
 class SignupSerializer(serializers.Serializer):
+    shop_name = serializers.CharField(max_length=200)
+    shop_address = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    business_type = serializers.CharField(required=False, allow_blank=True, max_length=100)
     username = serializers.CharField(max_length=150)
     email = serializers.EmailField(validators=[validate_email_exists])
     password = serializers.CharField(write_only=True, min_length=8)
