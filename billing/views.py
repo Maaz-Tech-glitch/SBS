@@ -73,11 +73,10 @@ class CancelInvoiceAPIView(APIView):
 
 
 class GenerateInvoicePDFAPIView(APIView):
-    permission_classes = [IsAuthenticated , IsSubscriptionActive]
+    permission_classes = [IsAuthenticated, IsSubscriptionActive]
 
     def post(self, request, pk):
-        invoice = InvoiceRepository.get_by_id(pk)
-        InvoiceOwnershipService.ensure_owner(invoice, request.user)
+        invoice = InvoiceRepository.get_by_id(pk, tenant=request.user.tenant)
         file_name = ReceiptService.generate_pdf(invoice)
         return Response(
             {"message": "PDF generated successfully.", "file": file_name},
@@ -86,10 +85,24 @@ class GenerateInvoicePDFAPIView(APIView):
 
 
 class GenerateThermalReceiptAPIView(APIView):
-    permission_classes = [IsAuthenticated , IsSubscriptionActive]
+    permission_classes = [IsAuthenticated, IsSubscriptionActive]
 
     def get(self, request, pk):
-        invoice = InvoiceRepository.get_by_id(pk)
-        InvoiceOwnershipService.ensure_owner(invoice, request.user)
+        invoice = InvoiceRepository.get_by_id(pk, tenant=request.user.tenant)
         receipt = ReceiptService.generate_thermal_receipt(invoice)
         return Response({"receipt": receipt})
+    
+    
+class InvoiceDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsSubscriptionActive]
+
+    def get(self, request, pk):
+        invoice = InvoiceService.get_detail(
+            invoice_id=pk,
+            tenant=request.user.tenant
+        )
+
+        return Response(
+            InvoiceDetailSerializer(invoice).data,
+            status=status.HTTP_200_OK
+        )

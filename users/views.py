@@ -350,11 +350,18 @@ class UserListCreateAPIView(ListCreateAPIView):
         max_users = SubscriptionService.get_max_users_for_tenant(tenant)
         if current_count >= max_users:
             raise UserLimitExceededException()
+        # serializer = self.get_serializer(data=request.data)
+        # serializer.is_valid(raise_exception=True)
+        # user = serializer.save()
+        # user.tenant = tenant
+        # user.save(update_fields=["tenant"])
+        # return Response(
+        #     {"message": "User Created Successfully", "data": UserSerializer(user).data},
+        #     status=status.HTTP_201_CREATED
+        # )
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = serializer.save()
-        user.tenant = tenant
-        user.save(update_fields=["tenant"])
+        user = serializer.save(tenant=tenant)  
         return Response(
             {"message": "User Created Successfully", "data": UserSerializer(user).data},
             status=status.HTTP_201_CREATED

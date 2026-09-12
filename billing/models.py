@@ -35,6 +35,8 @@ class Invoice(models.Model):
     payment_method = models.CharField(max_length=20, choices=PAYMENT_CHOICES, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    
+    
 
     def save(self, *args, **kwargs):
         is_new = self.pk is None
@@ -74,6 +76,7 @@ class InvoiceItem(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
     quantity = models.PositiveIntegerField(default=1)
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)
+    cost_price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     discount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     discount_type = models.CharField(max_length=20, choices=DISCOUNT_TYPE_CHOICES, default="PERCENTAGE")
     total_price = models.DecimalField(max_digits=10, decimal_places=2)
@@ -84,3 +87,10 @@ class InvoiceItem(models.Model):
 
     def __str__(self):
         return f"{self.invoice.invoice_number} - {self.product.name}"
+    @property
+    def profit(self):
+        item_cost = self.cost_price * self.quantity
+        return self.total_price - item_cost
+    def __str__(self):
+        return f"{self.invoice.invoice_number} - {self.product.name}"
+    

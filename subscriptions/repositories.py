@@ -22,9 +22,9 @@ class SubscriptionRepository:
         return Subscription.objects.create(tenant=tenant, plan=plan, payment_method=payment_method)
 
     @staticmethod
-    def get_by_id(subscription_id):
+    def get_by_id(subscription_id, tenant):
         try:
-            return Subscription.objects.get(id=subscription_id)
+            return Subscription.objects.get(id=subscription_id, tenant=tenant)
         except Subscription.DoesNotExist:
             raise SubscriptionNotFoundException()
 

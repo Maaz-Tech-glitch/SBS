@@ -12,6 +12,7 @@ urlpatterns = [
     path("api/reports/", include("reports.urls")),
     path("api/tenants/", include("tenants.urls")),
     path("api/subscriptions/", include("subscriptions.urls")),
+    path("api/", include("accounting.urls")),  # <-- Update: 'api/accounting/' add kar diya
 ]
 
 if settings.DEBUG:

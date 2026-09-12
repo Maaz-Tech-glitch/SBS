@@ -25,6 +25,7 @@ from .views import (
     CancelInvoiceAPIView,
     GenerateInvoicePDFAPIView,
     GenerateThermalReceiptAPIView,
+    InvoiceDetailAPIView
 )
 
 urlpatterns = [
@@ -33,5 +34,6 @@ urlpatterns = [
     path("invoices/<int:pk>/complete/", CompleteSaleAPIView.as_view(), name="complete-sale"),
     path("invoices/<int:pk>/cancel/", CancelInvoiceAPIView.as_view(), name="cancel-invoice"),
     path("invoices/<int:pk>/pdf/", GenerateInvoicePDFAPIView.as_view(), name="invoice-pdf"),
+    path("invoices/<int:pk>/",InvoiceDetailAPIView.as_view(),name="invoice-detail"),
     path("invoices/<int:pk>/receipt/", GenerateThermalReceiptAPIView.as_view(), name="thermal-receipt"),
 ]

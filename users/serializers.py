@@ -13,8 +13,28 @@ class LoginSerializer(serializers.Serializer):
             raise serializers.ValidationError("Either username or email is required.")
         return data
 # Shopkeeper Serializer
+# class CreateShopkeeperSerializer(serializers.ModelSerializer):
+#     password = serializers.CharField(write_only=True)
+#     class Meta:
+#         model = User
+#         fields = [
+#             "username",
+#             "email",
+#             "password",
+#             "phone",
+#         ]
+#     def create(self, validated_data):
+#         user = User.objects.create_user(
+#             username=validated_data["username"],
+#             email=validated_data["email"],
+#             password=validated_data["password"],
+#             phone=validated_data["phone"],
+#             role="shopkeeper",
+#         )
+#         return user
 class CreateShopkeeperSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
+
     class Meta:
         model = User
         fields = [
@@ -23,18 +43,22 @@ class CreateShopkeeperSerializer(serializers.ModelSerializer):
             "password",
             "phone",
         ]
+
     def create(self, validated_data):
+        tenant = validated_data.pop("tenant", None) 
         user = User.objects.create_user(
             username=validated_data["username"],
             email=validated_data["email"],
             password=validated_data["password"],
-            phone=validated_data["phone"],
+            phone=validated_data.get("phone", ""),
+            tenant=tenant,                          
             role="shopkeeper",
         )
         return user
 # User Serializer   
 class UserSerializer(serializers.ModelSerializer):
     tenant_name = serializers.CharField(source="tenant.name", read_only=True, default=None)
+
     class Meta:
         model = User
         fields = [
@@ -46,6 +70,7 @@ class UserSerializer(serializers.ModelSerializer):
             "tenant",
             "tenant_name",
         ]
+        read_only_fields = ["id", "tenant", "role"] 
 
 class ForgotPasswordSerializer(serializers.Serializer):
     email = serializers.EmailField()
@@ -92,16 +117,10 @@ def validate_email_exists(email):
     except serializers.ValidationError:
         raise
     except Exception:
-        # SMTP server response na de (Gmail jaise providers block karte hain) -
-        # to hum reject nahi karte, warna real users bhi block ho jayenge
         pass
 
 
-# class SignupSerializer(serializers.Serializer):
-#     username = serializers.CharField(max_length=150)
-#     email = serializers.EmailField(validators=[validate_email_exists])
-#     password = serializers.CharField(write_only=True, min_length=8)
-#     phone = serializers.CharField(required=False, allow_blank=True, max_length=15)
+
 class SignupSerializer(serializers.Serializer):
     shop_name = serializers.CharField(max_length=200)
     shop_address = serializers.CharField(required=False, allow_blank=True, max_length=255)
