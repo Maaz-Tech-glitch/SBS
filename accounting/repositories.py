@@ -1,5 +1,7 @@
+from django.utils.text import slugify
 from .models import Account, AccountType, JournalEntry, JournalEntryLine
 from .exceptions import AccountNotFoundException, JournalEntryNotFoundException
+from .constants import SystemAccountCodes
 
 
 
@@ -45,6 +47,26 @@ class AccountRepository:
             raise AccountNotFoundException(
                 f"Account with code {code} not found. Run seed_chart_of_accounts first."
             )
+            
+    @staticmethod
+    def get_or_create_supplier_payable(tenant, supplier_name):
+        """Har supplier ka apna sub-ledger account Accounts Payable ke neeche."""
+        parent = AccountRepository.get_by_code(tenant, SystemAccountCodes.ACCOUNTS_PAYABLE)
+        code = f"{SystemAccountCodes.ACCOUNTS_PAYABLE}-{slugify(supplier_name, allow_unicode=True)}"
+        account, _ = Account.objects.get_or_create(
+            tenant=tenant, code=code,
+            defaults={
+                "account_type": parent.account_type,
+                "name": f"A/P - {supplier_name}",
+                "parent": parent,
+            },
+        )
+        return account
+    @staticmethod
+    def list_supplier_payables(tenant):
+        """Sirf Accounts Payable ke children (supplier sub-ledgers) return karta hai."""
+        parent = AccountRepository.get_by_code(tenant, SystemAccountCodes.ACCOUNTS_PAYABLE)
+        return Account.objects.filter(tenant=tenant, parent=parent)
 
 
 class JournalEntryRepository:

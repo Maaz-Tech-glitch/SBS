@@ -2,7 +2,7 @@ from django.urls import path
 from .views import (
     AccountListAPIView, JournalEntryListAPIView,
     JournalEntryDetailAPIView, JournalEntryPostAPIView, JournalEntryVoidAPIView,
-    TrialBalanceAPIView, TransactionAPIView, LedgerAPIView,
+    TrialBalanceAPIView, TransactionAPIView, LedgerAPIView , SupplierPayableListAPIView,
 )
 
 urlpatterns = [
@@ -14,4 +14,5 @@ urlpatterns = [
     path("trial-balance/", TrialBalanceAPIView.as_view(), name="trial-balance"),
     path("transactions/", TransactionAPIView.as_view(), name="record-transaction"),
     path("ledger/", LedgerAPIView.as_view(), name="ledger"),
+    path("supplier-payable/", SupplierPayableListAPIView.as_view(), name="supplier-payable"),
 ]

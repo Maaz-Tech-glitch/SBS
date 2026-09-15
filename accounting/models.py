@@ -7,8 +7,8 @@ from tenants.models import Tenant
 class AccountType(models.Model):
     """The 5 fundamental categories: Asset, Liability, Equity, Revenue, Expense"""
     NATURE_CHOICES = [
-        ("DEBIT", "Debit"),    # balance increases on debit side (Assets, Expenses)
-        ("CREDIT", "Credit"),  # balance increases on credit side (Liabilities, Equity, Revenue)
+        ("DEBIT", "Debit"),    
+        ("CREDIT", "Credit"),  
     ]
     name = models.CharField(max_length=50, unique=True)  # ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE
     normal_balance = models.CharField(max_length=10, choices=NATURE_CHOICES)
