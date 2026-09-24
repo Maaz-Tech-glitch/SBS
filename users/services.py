@@ -1,131 +1,86 @@
 import random
+
 from django.conf import settings
+from django.contrib.auth.hashers import (
+    make_password,
+    check_password,
+)
+from django.core import signing
+from django.core.cache import cache
 from django.core.mail import send_mail
-from django.utils import timezone
+from django.db import transaction
+
 from rest_framework_simplejwt.tokens import RefreshToken
-from .repositories import UserRepository, OTPRepository , EmailOTPRepository
+
+from .repositories import (
+    UserRepository,
+    OTPRepository,
+)
+
 from .strategies import AuthenticationFactory
-from .exceptions import InvalidTokenException , UsernameAlreadyExistsException, EmailAlreadyExistsException
 
-def generate_otp():
-    """Generate random 6-digit OTP"""
-    return str(random.randint(100000, 999999))
-
-def send_otp_email(user, otp):
-    subject = "SBS POS - Password Reset OTP"
-    message = f"""
-    Hello {user.username},
-    Your OTP for password reset is:
-    {otp}
-    This OTP will expire in 5 minutes.
-    If you didn't request this, please ignore this email.
-    Thank you,
-    SBS POS Team
-    """
-    send_mail(
-        subject=subject,
-        message=message,
-        from_email=settings.EMAIL_HOST_USER,
-        recipient_list=[user.email],
-        fail_silently=False,
-    )
+from .exceptions import (
+    InvalidTokenException,
+    UsernameAlreadyExistsException,
+    EmailAlreadyExistsException,
+    InvalidOTPException,
+    OTPExpiredException,
+    RateLimitException,
+    InvalidResetTokenException,
+    ResetTokenExpiredException,
+    InvalidSignupVerificationTokenException,
+    SignupVerificationExpiredException,
+)
 
 
+# =========================================================
+# BASE SERVICE
+# =========================================================
 
 class BaseService:
-    
+
     @staticmethod
     def validate_not_none(value, message):
-        """Validate value is not None"""
         if not value:
             raise ValueError(message)
 
 
+# =========================================================
+# OTP GENERATOR
+# =========================================================
 
-class AuthenticationService(BaseService):    
-    @staticmethod
-    def authenticate_user(username, password, strategy_type="username"):
-        strategy = AuthenticationFactory.get_strategy(strategy_type)
-        return strategy.authenticate(username=username, password=password)
+def generate_otp():
+    return str(
+        random.randint(
+            100000,
+            999999
+        )
+    )
 
 
+# =========================================================
+# PASSWORD RESET EMAIL
+# =========================================================
 
-class TokenService(BaseService):
-    @staticmethod
-    def generate_tokens(user):
-        refresh = RefreshToken.for_user(user)
-        return {
-            "access": str(refresh.access_token),
-            "refresh": str(refresh)
-        }
+def send_otp_email(user, otp):
+    subject = "SBS POS - Password Reset OTP"
 
-    @staticmethod
-    def validate_refresh_token(refresh_token):
-        if not refresh_token:
-            raise InvalidTokenException("Refresh token required")
-        try:
-            token = RefreshToken(refresh_token)
-            return token
-        except Exception:
-            raise InvalidTokenException()
-class LogoutService(BaseService):
-    @staticmethod
-    def logout_user(refresh_token):
-        token = TokenService.validate_refresh_token(refresh_token)
-        token.blacklist()
-        return True
-
-class ResponseFormatterService(BaseService):
-    @staticmethod
-    def format_user_data(user):
-        return {
-            "tenant_id": user.tenant_id,
-            "tenant_name": user.tenant.name if user.tenant else None,
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "phone": user.phone,
-            "role": user.role,
-        }    
-    @staticmethod
-    def format_login_response(user, tokens):
-        """Format login response"""
-        return {
-            "message": "Login Successful",
-            "access": tokens["access"],
-            "refresh": tokens["refresh"],
-            "user": ResponseFormatterService.format_user_data(user)
-        }
-
-class PasswordResetService(BaseService):
-    @staticmethod
-    def request_password_reset(email):
-        user = UserRepository.get_by_email(email)
-        OTPRepository.check_rate_limit(user)
-        OTPRepository.delete_old(user)
-        otp = generate_otp()
-        OTPRepository.create(user, otp)
-        send_otp_email(user, otp)
-        return {"message": "OTP sent successfully"}
-    
-class PasswordResetConfirmService(BaseService):    
-    @staticmethod
-    def reset_password(email, otp, new_password):
-        """Reset password with OTP"""
-        user = UserRepository.get_by_email(email)
-        otp_obj = OTPRepository.get_valid(user, otp)
-        user.change_password(new_password)
-        otp_obj.mark_as_used()
-        return {"message": "Password Reset Successfully"}
-    
-def send_verification_email(user, otp):
-    subject = "SBS POS - Verify Your Email"
     message = f"""
-    Hello {user.username},
-    Your email verification OTP is:
-    {otp}
-    This OTP will expire in 5 minutes.
-    """
+Hello {user.username},
+
+Your OTP for password reset is:
+
+{otp}
+
+This OTP will expire in 1 minute.
+
+If you did not request this,
+please ignore this email.
+
+Thank you,
+SBS POS Team
+"""
+
     send_mail(
         subject=subject,
         message=message,
@@ -135,96 +90,859 @@ def send_verification_email(user, otp):
     )
 
 
-# class SignupService(BaseService):
-#     @staticmethod
-#     def register(username, email, password, phone=""):
-#         from .models import User
-        
-#         if User.objects.filter(username=username).exists():
-#             raise UsernameAlreadyExistsException()
-#         if User.objects.filter(email=email).exists():
-#             raise EmailAlreadyExistsException()
-#         user = User.objects.create_user(username=username, email=email, password=password,phone=phone, role="admin")
-#         otp = generate_otp()
-#         EmailOTPRepository.create(user, otp)
-#         send_verification_email(user, otp)
-#         return {"message": "Account created. OTP sent to your email for verification."}
-class SignupService(BaseService):
-    @staticmethod
-    def register(shop_name, username, email, password, phone="", shop_address="", business_type=""):
-        from django.db import transaction
-        from .models import User
-        from tenants.services import TenantService
+# =========================================================
+# SIGNUP OTP EMAIL
+# =========================================================
 
-        if User.objects.filter(username=username).exists():
-            raise UsernameAlreadyExistsException()
-        if User.objects.filter(email=email).exists():
+def send_signup_otp_email(email, otp):
+    subject = "SBS POS - Verify Your Email"
+
+    message = f"""
+Hello,
+
+Your SBS POS email verification code is:
+
+{otp}
+
+This OTP will expire in 1 minute.
+
+If you did not request this code,
+please ignore this email.
+
+Thank you,
+SBS POS Team
+"""
+
+    send_mail(
+        subject=subject,
+        message=message,
+        from_email=settings.EMAIL_HOST_USER,
+        recipient_list=[email],
+        fail_silently=False,
+    )
+
+
+# =========================================================
+# SIGNUP OTP SERVICE
+# =========================================================
+
+class SignupOTPService(BaseService):
+
+    # OTP itself valid for 1 minute
+    OTP_EXPIRE_SECONDS = 60
+
+    # User can request another OTP after 1 minute
+    RESEND_COOLDOWN_SECONDS = 60
+
+    # After email verification,
+    # user has 5 minutes to create account
+    VERIFICATION_TOKEN_SECONDS = 300
+
+    @staticmethod
+    def _otp_key(email):
+        email = email.strip().lower()
+
+        return f"signup_otp:{email}"
+
+    @staticmethod
+    def _cooldown_key(email):
+        email = email.strip().lower()
+
+        return f"signup_otp_cooldown:{email}"
+
+    # =====================================================
+    # STEP 1 - SEND SIGNUP OTP
+    # =====================================================
+
+    @staticmethod
+    def request_otp(
+        shop_name,
+        business_type,
+        email,
+    ):
+        from .models import User
+
+        email = email.strip().lower()
+        shop_name = shop_name.strip()
+        business_type = business_type.strip()
+
+        # -------------------------------------------------
+        # BASIC VALIDATION
+        # -------------------------------------------------
+
+        if not shop_name:
+            raise ValueError(
+                "Shop name is required"
+            )
+
+        if not business_type:
+            raise ValueError(
+                "Business type is required"
+            )
+
+        # -------------------------------------------------
+        # EMAIL ALREADY REGISTERED
+        # -------------------------------------------------
+
+        if User.objects.filter(
+            email__iexact=email
+        ).exists():
             raise EmailAlreadyExistsException()
 
-        with transaction.atomic():
-            tenant = TenantService.create_tenant(
-                name=shop_name, email=email, phone=phone,
-                address=shop_address, business_type=business_type,
-            )
-            user = User.objects.create_user(
-                username=username, email=email, password=password,
-                phone=phone, role="admin", tenant=tenant,
-            )
+        # -------------------------------------------------
+        # RESEND LIMIT
+        # -------------------------------------------------
+
+        cooldown_key = (
+            SignupOTPService
+            ._cooldown_key(email)
+        )
+
+        if cache.get(cooldown_key):
+            raise RateLimitException()
+
+        # -------------------------------------------------
+        # GENERATE OTP
+        # -------------------------------------------------
+
         otp = generate_otp()
-        EmailOTPRepository.create(user, otp)
-        send_verification_email(user, otp)
-        return {"message": "Account created. OTP sent to your email for verification."}
 
+        otp_key = (
+            SignupOTPService
+            ._otp_key(email)
+        )
 
-class EmailVerificationService(BaseService):
-    @staticmethod
-    def verify(email, otp):
-        from .exceptions import UserAlreadyVerifiedException
-        user = UserRepository.get_by_email(email)
-        if user.is_email_verified:
-            raise UserAlreadyVerifiedException()
+        # Store OTP hash + signup information temporarily.
+        # Nothing is created in Tenant/User tables yet.
 
-        otp_obj = EmailOTPRepository.get_valid(user, otp)
-        user.is_email_verified = True
-        user.save(update_fields=["is_email_verified"])
-        otp_obj.mark_as_used()
+        cache.set(
+            otp_key,
+            {
+                "otp_hash": make_password(otp),
+                "shop_name": shop_name,
+                "business_type": business_type,
+            },
+            timeout=(
+                SignupOTPService
+                .OTP_EXPIRE_SECONDS
+            ),
+        )
 
-        tokens = TokenService.generate_tokens(user)
+        # Prevent immediate resend
+
+        cache.set(
+            cooldown_key,
+            True,
+            timeout=(
+                SignupOTPService
+                .RESEND_COOLDOWN_SECONDS
+            ),
+        )
+
+        # -------------------------------------------------
+        # SEND EMAIL
+        # -------------------------------------------------
+
+        send_signup_otp_email(
+            email=email,
+            otp=otp,
+        )
 
         return {
-            "message": "Email verified successfully",
-            "access": tokens["access"],
-            "refresh": tokens["refresh"],
-            "User": ResponseFormatterService.format_user_data(user),
+            "otp_sent": True,
+            "expires_in": 60,
+        }
+
+    # =====================================================
+    # STEP 2 - VERIFY OTP ONLY
+    #
+    # ACCOUNT IS NOT CREATED HERE
+    # =====================================================
+
+    @staticmethod
+    def verify_otp(email, otp):
+        from .models import User
+
+        email = email.strip().lower()
+
+        # Prevent verification if account
+        # was already created meanwhile.
+
+        if User.objects.filter(
+            email__iexact=email
+        ).exists():
+            raise EmailAlreadyExistsException()
+
+        otp_key = (
+            SignupOTPService
+            ._otp_key(email)
+        )
+
+        otp_data = cache.get(
+            otp_key
+        )
+
+        # -------------------------------------------------
+        # OTP MISSING / EXPIRED
+        # -------------------------------------------------
+
+        if not otp_data:
+            raise OTPExpiredException()
+
+        stored_otp_hash = (
+            otp_data.get(
+                "otp_hash"
+            )
+        )
+
+        if not stored_otp_hash:
+            raise OTPExpiredException()
+
+        # -------------------------------------------------
+        # OTP CHECK
+        # -------------------------------------------------
+
+        if not check_password(
+            otp,
+            stored_otp_hash
+        ):
+            raise InvalidOTPException()
+
+        # -------------------------------------------------
+        # EMAIL VERIFIED
+        #
+        # Create temporary signed token.
+        # This does NOT create shop/user.
+        # -------------------------------------------------
+
+        verification_token = signing.dumps(
+            {
+                "email": email,
+
+                "shop_name":
+                    otp_data["shop_name"],
+
+                "business_type":
+                    otp_data[
+                        "business_type"
+                    ],
+
+                "purpose":
+                    "signup_email_verified",
+            },
+            salt=
+                "sbs-signup-verification",
+        )
+
+        # OTP cannot be used again
+
+        cache.delete(
+            otp_key
+        )
+
+        cache.delete(
+            SignupOTPService
+            ._cooldown_key(email)
+        )
+
+        return {
+            "verified": True,
+
+            "verification_token":
+                verification_token,
+
+            # Frontend shows verified state
+            # for maximum 5 minutes.
+            "expires_in":
+                SignupOTPService
+                .VERIFICATION_TOKEN_SECONDS,
+        }
+
+
+# =========================================================
+# FINAL SIGNUP SERVICE
+# =========================================================
+
+class SignupService(BaseService):
+
+    @staticmethod
+    def register(
+        shop_name,
+        business_type,
+        username,
+        email,
+        password,
+        verification_token,
+        phone="",
+        shop_address="",
+    ):
+        from .models import User
+
+        from tenants.services import (
+            TenantService,
+        )
+
+        # =====================================================
+        # CLEAN INPUT
+        # =====================================================
+
+        email = email.strip().lower()
+        username = username.strip()
+        shop_name = shop_name.strip()
+        business_type = business_type.strip()
+
+
+        # =====================================================
+        # VERIFY EMAIL VERIFICATION TOKEN
+        # =====================================================
+
+        try:
+            payload = signing.loads(
+                verification_token,
+
+                salt="sbs-signup-verification",
+
+                # Email verification valid for 5 minutes
+                max_age=(
+                    SignupOTPService
+                    .VERIFICATION_TOKEN_SECONDS
+                ),
+            )
+
+        except signing.SignatureExpired:
+            raise SignupVerificationExpiredException()
+
+        except signing.BadSignature:
+            raise InvalidSignupVerificationTokenException()
+
+
+        # =====================================================
+        # TOKEN PURPOSE CHECK
+        # =====================================================
+
+        if (
+            payload.get("purpose")
+            != "signup_email_verified"
+        ):
+            raise InvalidSignupVerificationTokenException()
+
+
+        # =====================================================
+        # VERIFIED EMAIL MUST MATCH
+        # =====================================================
+
+        verified_email = (
+            payload
+            .get("email", "")
+            .strip()
+            .lower()
+        )
+
+        if verified_email != email:
+            raise InvalidSignupVerificationTokenException(
+                "Email was changed. "
+                "Please verify the email again."
+            )
+
+
+        # =====================================================
+        # VERIFIED SHOP NAME MUST MATCH
+        # =====================================================
+
+        verified_shop_name = (
+            payload
+            .get("shop_name", "")
+            .strip()
+        )
+
+        if verified_shop_name != shop_name:
+            raise InvalidSignupVerificationTokenException(
+                "Shop name was changed. "
+                "Please verify email again."
+            )
+
+
+        # =====================================================
+        # VERIFIED BUSINESS TYPE MUST MATCH
+        # =====================================================
+
+        verified_business_type = (
+            payload
+            .get(
+                "business_type",
+                ""
+            )
+            .strip()
+        )
+
+        if (
+            verified_business_type
+            != business_type
+        ):
+            raise InvalidSignupVerificationTokenException(
+                "Business type was changed. "
+                "Please verify email again."
+            )
+
+
+        # =====================================================
+        # DUPLICATE CHECK
+        # =====================================================
+
+        if User.objects.filter(
+            username=username
+        ).exists():
+            raise UsernameAlreadyExistsException()
+
+        if User.objects.filter(
+            email__iexact=email
+        ).exists():
+            raise EmailAlreadyExistsException()
+
+
+        # =====================================================
+        # CREATE TENANT + ADMIN
+        # =====================================================
+
+        with transaction.atomic():
+
+            # Double-check inside transaction
+
+            if User.objects.filter(
+                username=username
+            ).exists():
+                raise UsernameAlreadyExistsException()
+
+            if User.objects.filter(
+                email__iexact=email
+            ).exists():
+                raise EmailAlreadyExistsException()
+
+
+            # =================================================
+            # CREATE SHOP / TENANT
+            # =================================================
+
+            tenant = (
+                TenantService
+                .create_tenant(
+                    name=shop_name,
+                    email=email,
+                    phone=phone,
+                    address=shop_address,
+                    business_type=business_type,
+                )
+            )
+
+
+            # =================================================
+            # CREATE ADMIN USER
+            # =================================================
+
+            user = (
+                User.objects
+                .create_user(
+                    username=username,
+                    email=email,
+                    password=password,
+                    phone=phone,
+                    role="admin",
+                    tenant=tenant,
+
+                    # Email already verified using OTP
+                    is_email_verified=True,
+                )
+            )
+
+
+        # =====================================================
+        # GENERATE JWT TOKENS
+        #
+        # Account create hone ke baad user temporarily
+        # authenticated hoga taake subscription choose kar sake.
+        # =====================================================
+
+        tokens = (
+            TokenService
+            .generate_tokens(user)
+        )
+
+
+        # =====================================================
+        # RESPONSE
+        # =====================================================
+
+        return {
+            "account_created": True,
+
+            "access":
+                tokens["access"],
+
+            "refresh":
+                tokens["refresh"],
+
+            "user": {
+                "id":
+                    user.id,
+
+                "username":
+                    user.username,
+
+                "email":
+                    user.email,
+
+                "phone":
+                    user.phone,
+
+                "role":
+                    user.role,
+
+                "tenant_id":
+                    user.tenant_id,
+
+                "tenant_name":
+                    (
+                        user.tenant.name
+                        if user.tenant
+                        else None
+                    ),
+            },
+
+            # New user ne abhi plan choose nahi kiya
+            "subscription_active": False,
+        }
+
+# =========================================================
+# AUTHENTICATION
+# =========================================================
+
+class AuthenticationService(BaseService):
+
+    @staticmethod
+    def authenticate_user(
+        username,
+        password,
+        strategy_type="username"
+    ):
+        strategy = (
+            AuthenticationFactory
+            .get_strategy(
+                strategy_type
+            )
+        )
+
+        return strategy.authenticate(
+            username=username,
+            password=password
+        )
+
+
+# =========================================================
+# JWT TOKEN SERVICE
+# =========================================================
+
+class TokenService(BaseService):
+
+    @staticmethod
+    def generate_tokens(user):
+
+        refresh = (
+            RefreshToken.for_user(
+                user
+            )
+        )
+
+        return {
+            "access":
+                str(
+                    refresh.access_token
+                ),
+
+            "refresh":
+                str(refresh),
         }
 
     @staticmethod
-    def resend_otp(email):
-        from .exceptions import UserAlreadyVerifiedException
-        user = UserRepository.get_by_email(email)
-        if user.is_email_verified:
-            raise UserAlreadyVerifiedException()
-        EmailOTPRepository.check_rate_limit(user)
-        EmailOTPRepository.delete_old(user)
+    def validate_refresh_token(
+        refresh_token
+    ):
+
+        if not refresh_token:
+            raise InvalidTokenException(
+                "Refresh token required"
+            )
+
+        try:
+            return RefreshToken(
+                refresh_token
+            )
+
+        except Exception:
+            raise (
+                InvalidTokenException()
+            )
+
+
+# =========================================================
+# LOGOUT
+# =========================================================
+
+class LogoutService(BaseService):
+
+    @staticmethod
+    def logout_user(
+        refresh_token
+    ):
+
+        token = (
+            TokenService
+            .validate_refresh_token(
+                refresh_token
+            )
+        )
+
+        token.blacklist()
+
+        return True
+
+
+# =========================================================
+# RESPONSE FORMATTER
+# =========================================================
+
+class ResponseFormatterService(BaseService):
+
+    @staticmethod
+    def format_user_data(user):
+
+        return {
+            "tenant_id":
+                user.tenant_id,
+
+            "tenant_name":
+                user.tenant.name
+                if user.tenant
+                else None,
+
+            "id":
+                user.id,
+
+            "username":
+                user.username,
+
+            "email":
+                user.email,
+
+            "phone":
+                user.phone,
+
+            "role":
+                user.role,
+        }
+
+    @staticmethod
+    def format_login_response(
+        user,
+        tokens
+    ):
+
+        return {
+            "message":
+                "Login Successful",
+
+            "access":
+                tokens["access"],
+
+            "refresh":
+                tokens["refresh"],
+
+            "user":
+                ResponseFormatterService
+                .format_user_data(user),
+        }
+
+
+# =========================================================
+# PASSWORD RESET - SEND OTP
+# =========================================================
+
+class PasswordResetService(BaseService):
+
+    @staticmethod
+    def request_password_reset(
+        email
+    ):
+
+        user = (
+            UserRepository
+            .get_by_email(email)
+        )
+
+        OTPRepository.check_rate_limit(
+            user
+        )
+
+        OTPRepository.delete_old(
+            user
+        )
+
         otp = generate_otp()
-        EmailOTPRepository.create(user, otp)
-        send_verification_email(user, otp)
-        return {"message": "OTP resent successfully"}
-    
-def send_verification_email(user, otp):
-    subject = "SBS POS - Verify Your Email"
-    message = f"""
-    Hello {user.username},
-    Your email verification OTP is:
-    {otp}
-    This OTP will expire in 5 minutes.
-    """
-    send_mail(
-        subject=subject,
-        message=message,
-        from_email=settings.EMAIL_HOST_USER,
-        recipient_list=[user.email],
-        fail_silently=False,
-    )
+
+        OTPRepository.create(
+            user,
+            otp
+        )
+
+        send_otp_email(
+            user,
+            otp
+        )
+
+        return {
+            "message":
+                "OTP sent successfully"
+        }
 
 
+# =========================================================
+# PASSWORD RESET - VERIFY OTP
+# =========================================================
+
+class PasswordOTPVerificationService(
+    BaseService
+):
+
+    @staticmethod
+    def verify(
+        email,
+        otp
+    ):
+
+        user = (
+            UserRepository
+            .get_by_email(email)
+        )
+
+        otp_obj = (
+            OTPRepository
+            .get_valid(
+                user,
+                otp
+            )
+        )
+
+        # OTP cannot be reused
+
+        otp_obj.mark_as_used()
+
+        # Temporary reset token
+
+        reset_token = signing.dumps(
+            {
+                "user_id":
+                    user.id,
+
+                "password_hash":
+                    user.password,
+
+                "purpose":
+                    "password_reset",
+            },
+
+            salt=
+                "sbs-password-reset",
+        )
+
+        return {
+            "message":
+                "OTP verified successfully",
+
+            "reset_token":
+                reset_token,
+        }
+
+
+# =========================================================
+# PASSWORD RESET - SET NEW PASSWORD
+# =========================================================
+
+class SetNewPasswordService(BaseService):
+
+    @staticmethod
+    def set_password(
+        reset_token,
+        new_password
+    ):
+
+        try:
+            payload = signing.loads(
+                reset_token,
+
+                salt=
+                    "sbs-password-reset",
+
+                max_age=600,
+            )
+
+        except signing.SignatureExpired:
+            raise (
+                ResetTokenExpiredException()
+            )
+
+        except signing.BadSignature:
+            raise (
+                InvalidResetTokenException()
+            )
+
+        # -------------------------------------------------
+        # PURPOSE CHECK
+        # -------------------------------------------------
+
+        if (
+            payload.get("purpose")
+            != "password_reset"
+        ):
+            raise (
+                InvalidResetTokenException()
+            )
+
+        # -------------------------------------------------
+        # GET USER
+        # -------------------------------------------------
+
+        user = (
+            UserRepository
+            .get_by_id(
+                payload["user_id"]
+            )
+        )
+
+        # -------------------------------------------------
+        # PREVENT TOKEN REUSE
+        # -------------------------------------------------
+
+        if (
+            user.password
+            != payload.get(
+                "password_hash"
+            )
+        ):
+            raise (
+                InvalidResetTokenException(
+                    "Password reset session "
+                    "already used"
+                )
+            )
+
+        # -------------------------------------------------
+        # CHANGE PASSWORD
+        # -------------------------------------------------
+
+        user.change_password(
+            new_password
+        )
+
+        return {
+            "message":
+                "Password Reset Successfully"
+        }

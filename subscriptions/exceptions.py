@@ -32,3 +32,13 @@ class NoTenantException(SubscriptionException):
 class SubscriptionAlreadyActiveException(SubscriptionException):
     status_code = 409
     message = "You already have an active subscription. Wait for it to expire before subscribing again."
+    
+    
+class TrialNotAvailableException(SubscriptionException):
+    status_code = 400
+    message = "Free trial is not available for this plan"
+
+
+class TrialAlreadyUsedException(SubscriptionException):
+    status_code = 409
+    message = "You have already used the free trial for this plan"

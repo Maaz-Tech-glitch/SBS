@@ -48,13 +48,15 @@ INSTALLED_APPS = [
     'tenants',
     'subscriptions',
     'accounting',
+    "corsheaders",
     
 ]
 
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
+    "django.middleware.common.CommonMiddleware",
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
@@ -179,3 +181,18 @@ DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+CACHES = {
+    "default": {
+        "BACKEND": (
+            "django.core.cache.backends.locmem."
+            "LocMemCache"
+        ),
+        "LOCATION":
+            "sbs-pos-cache",
+    }
+}
