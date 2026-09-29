@@ -59,6 +59,52 @@ class User(AbstractUser):
     class Meta:
         ordering = ['-date_joined']
 
+
+class AccessModule(models.Model):
+    key = models.CharField(max_length=120, unique=True)
+    name = models.CharField(max_length=120)
+    category = models.CharField(max_length=80, blank=True, default="")
+    description = models.TextField(blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["category", "name"]
+        indexes = [
+            models.Index(fields=["is_active", "category"]),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.key})"
+
+
+class UserModulePermission(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="module_permissions")
+    module = models.ForeignKey(AccessModule, on_delete=models.CASCADE, related_name="user_permissions")
+    can_access = models.BooleanField(default=True)
+    granted_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="granted_module_permissions",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("user", "module")
+        ordering = ["module__category", "module__name"]
+        indexes = [
+            models.Index(fields=["user", "can_access"]),
+            models.Index(fields=["module", "can_access"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} -> {self.module.key} ({self.can_access})"
+
+
 class PasswordResetOTP(models.Model):
     
     user = models.ForeignKey(User,on_delete=models.CASCADE,related_name="password_otps")

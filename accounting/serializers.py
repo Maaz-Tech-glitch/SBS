@@ -1,3 +1,4 @@
+from decimal import Decimal
 from rest_framework import serializers
 from .models import AccountType, Account, JournalEntry, JournalEntryLine
 class AccountTypeSerializer(serializers.ModelSerializer):
@@ -51,7 +52,7 @@ class TransactionSerializer(serializers.Serializer):
     transaction_type = serializers.ChoiceField(
         choices=["OWNER_INVESTMENT", "OWNER_DRAWINGS", "EXPENSE_PAYMENT", "PURCHASE", "SUPPLIER_PAYMENT"]
     )
-    amount = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=0.01)
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal("0.01"))
     paid_amount = serializers.DecimalField(max_digits=14, decimal_places=2, required=False, min_value=0)
     account_id = serializers.IntegerField(required=False, allow_null=True)  
     supplier_name = serializers.CharField(required=False, allow_blank=True, max_length=150)

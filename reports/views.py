@@ -3,6 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .services import  SalesReportService, ChartDataService
 from subscriptions.permissions import IsSubscriptionActive
+from users.permissions import HasModuleAccess
 from .serializers import (
     DailySalesReportSerializer, MonthlySalesReportSerializer, YearlySalesReportSerializer,
     RevenueTrendSerializer, CategorySalesSerializer, PaymentMethodSplitSerializer, TopProductSerializer,
@@ -11,21 +12,24 @@ from .serializers import (
 
 
 class DailySalesReportAPIView(APIView):
-    permission_classes = [IsAuthenticated , IsSubscriptionActive]
+    required_module = "reports"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     def get(self, request):
         data = SalesReportService.daily(request.user)
         return Response(DailySalesReportSerializer(data).data)
 
 
 class MonthlySalesReportAPIView(APIView):
-    permission_classes = [IsAuthenticated , IsSubscriptionActive]
+    required_module = "reports"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     def get(self, request):
         data = SalesReportService.monthly(request.user)
         return Response(MonthlySalesReportSerializer(data).data)
 
 
 class YearlySalesReportAPIView(APIView):
-    permission_classes = [IsAuthenticated , IsSubscriptionActive]
+    required_module = "reports"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     def get(self, request):
         data = SalesReportService.yearly(request.user)
         return Response(YearlySalesReportSerializer(data).data)
@@ -34,7 +38,8 @@ class YearlySalesReportAPIView(APIView):
 
 
 class RevenueTrendChartAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsSubscriptionActive]
+    required_module = "reports"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     def get(self, request):
         days = int(request.query_params.get("days", 30))
         group_by = request.query_params.get("group_by", "day")  # "day" | "month"
@@ -43,7 +48,8 @@ class RevenueTrendChartAPIView(APIView):
 
 
 class CategorySalesChartAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsSubscriptionActive]
+    required_module = "reports"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     def get(self, request):
         days = int(request.query_params.get("days", 30))
         data = ChartDataService.category_sales(request.user, days=days)
@@ -51,7 +57,8 @@ class CategorySalesChartAPIView(APIView):
 
 
 class PaymentMethodChartAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsSubscriptionActive]
+    required_module = "reports"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
 
     def get(self, request):
         days = int(request.query_params.get("days", 30))
@@ -60,7 +67,8 @@ class PaymentMethodChartAPIView(APIView):
 
 
 class TopProductsChartAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsSubscriptionActive]
+    required_module = "reports"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     def get(self, request):
         days = int(request.query_params.get("days", 30))
         limit = int(request.query_params.get("limit", 10))

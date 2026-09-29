@@ -4,6 +4,7 @@ from rest_framework.generics import ListAPIView, ListCreateAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from subscriptions.permissions import IsSubscriptionActive
+from users.permissions import HasModuleAccess
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from .constants import SystemAccountCodes
@@ -21,13 +22,15 @@ from .repositories import (
 
 class AccountListAPIView(ListAPIView):
     serializer_class = AccountSerializer
-    permission_classes = [IsAuthenticated, IsSubscriptionActive]
+    required_module = "accounting"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     def get_queryset(self):
         return AccountRepository.list_by_tenant(self.request.user.tenant)
 
 
 class JournalEntryListAPIView(ListCreateAPIView):
-    permission_classes = [IsAuthenticated, IsSubscriptionActive]
+    required_module = "accounting"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = {
         "status": ["exact"],
@@ -54,33 +57,38 @@ class JournalEntryListAPIView(ListCreateAPIView):
         )
         return Response(JournalEntryDetailSerializer(entry).data, status=status.HTTP_201_CREATED)
 class JournalEntryDetailAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsSubscriptionActive]
+    required_module = "accounting"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     def get(self, request, pk):
         entry = JournalEntryRepository.get_by_id(pk, request.user.tenant)
         return Response(JournalEntryDetailSerializer(entry).data)
 
 class JournalEntryPostAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsSubscriptionActive]
+    required_module = "accounting"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     def post(self, request, pk):
         entry = JournalEntryService.post_entry(pk, request.user.tenant)
         return Response(JournalEntryDetailSerializer(entry).data)
 
 
 class JournalEntryVoidAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsSubscriptionActive]
+    required_module = "accounting"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     def post(self, request, pk):
         entry = JournalEntryService.void_entry(pk, request.user.tenant)
         return Response(JournalEntryDetailSerializer(entry).data)
 
 class TrialBalanceAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsSubscriptionActive]
+    required_module = "accounting"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     def get(self, request):
         data = LedgerService.trial_balance(request.user.tenant)
         return Response(data)
 
 
 class TransactionAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsSubscriptionActive]
+    required_module = "accounting"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     def post(self, request):
         serializer = TransactionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -94,7 +102,8 @@ class TransactionAPIView(APIView):
 
 
 class LedgerAPIView(ListAPIView):
-    permission_classes = [IsAuthenticated, IsSubscriptionActive]
+    required_module = "accounting"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     def get(self, request):
         tenant = request.user.tenant
         account_id = request.query_params.get("account")
@@ -167,20 +176,22 @@ class LedgerAPIView(ListAPIView):
         return Response(result)
     
 class SupplierPayableListAPIView(APIView):
-        permission_classes = [IsAuthenticated, IsSubscriptionActive]
-        def get(self, request):
-            tenant = request.user.tenant
-            accounts = AccountRepository.list_supplier_payables(tenant)
+    required_module = "accounting"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
 
-            result = []
-            for account in accounts:
-                balance = LedgerService.account_balance(account)
-                if balance > 0:
-                    result.append({
-                        "id": account.id,
-                        "name": account.name.replace("A/P - ", ""),
-                        "code": account.code,
-                        "balance": float(balance),
-                    })
-            result.sort(key=lambda r: r["name"])
-            return Response(result)
+    def get(self, request):
+        tenant = request.user.tenant
+        accounts = AccountRepository.list_supplier_payables(tenant)
+
+        result = []
+        for account in accounts:
+            balance = LedgerService.account_balance(account)
+            if balance > 0:
+                result.append({
+                    "id": account.id,
+                    "name": account.name.replace("A/P - ", ""),
+                    "code": account.code,
+                    "balance": float(balance),
+                })
+        result.sort(key=lambda r: r["name"])
+        return Response(result)

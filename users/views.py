@@ -19,6 +19,7 @@ from .serializers import (
     CreateShopkeeperSerializer,
     UserSerializer,
     LoginSerializer,
+    UserModulePermissionUpdateSerializer,
 
     ForgotPasswordSerializer,
     VerifyPasswordOTPSerializer,
@@ -36,6 +37,7 @@ from .services import (
     TokenService,
     LogoutService,
     ResponseFormatterService,
+    ModulePermissionService,
 
     PasswordResetService,
     PasswordOTPVerificationService,
@@ -273,14 +275,13 @@ class LoginAPIView(
             )
         )
 
-        response_data[
-            "subscription_active"
-        ] = (
+        response_data["subscription_active"] = (
             SubscriptionService
             .is_active(
                 user.tenant
             )
         )
+        response_data["allowed_modules"] = ModulePermissionService.get_allowed_module_keys(user)
 
         return Response(
             response_data,
@@ -510,6 +511,78 @@ class UserDetailAPIView(
 
         return User.objects.filter(
             tenant=tenant
+        )
+
+
+class UserModulePermissionAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request, user_id):
+        target_user = User.objects.filter(
+            id=user_id,
+            tenant=request.user.tenant,
+        ).first()
+
+        if not target_user:
+            return Response(
+                {"detail": "User not found in your shop."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if target_user.role != "shopkeeper":
+            return Response(
+                {"detail": "Module permissions are only available for shopkeepers."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {
+                "user": {
+                    "id": target_user.id,
+                    "username": target_user.username,
+                    "role": target_user.role,
+                },
+                "modules": ModulePermissionService.get_user_module_status(target_user),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def put(self, request, user_id):
+        target_user = User.objects.filter(
+            id=user_id,
+            tenant=request.user.tenant,
+        ).first()
+
+        if not target_user:
+            return Response(
+                {"detail": "User not found in your shop."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if target_user.role != "shopkeeper":
+            return Response(
+                {"detail": "Module permissions can only be assigned to shopkeepers."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = UserModulePermissionUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            modules = ModulePermissionService.set_user_permissions(
+                request.user,
+                target_user,
+                serializer.validated_data["modules"],
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                "message": "User module permissions updated successfully.",
+                "modules": modules,
+            },
+            status=status.HTTP_200_OK,
         )
 
 

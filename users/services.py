@@ -17,6 +17,8 @@ from .repositories import (
     OTPRepository,
 )
 
+from .models import AccessModule, UserModulePermission
+
 from .strategies import AuthenticationFactory
 
 from .exceptions import (
@@ -709,6 +711,127 @@ class LogoutService(BaseService):
 # =========================================================
 # RESPONSE FORMATTER
 # =========================================================
+
+class ModulePermissionService(BaseService):
+
+    DEFAULT_MODULES = [
+        {"key": "dashboard", "name": "Dashboard", "category": "Overview"},
+        {"key": "products", "name": "Products", "category": "Inventory"},
+        {"key": "billing", "name": "Billing", "category": "Sales"},
+        {"key": "accounting", "name": "Accounting", "category": "Finance"},
+        {"key": "reports", "name": "Reports", "category": "Analytics"},
+    ]
+
+    @staticmethod
+    def ensure_default_modules():
+        for module_data in ModulePermissionService.DEFAULT_MODULES:
+            AccessModule.objects.get_or_create(
+                key=module_data["key"],
+                defaults={
+                    "name": module_data["name"],
+                    "category": module_data["category"],
+                    "is_active": True,
+                },
+            )
+
+    @staticmethod
+    def get_active_modules():
+        ModulePermissionService.ensure_default_modules()
+        return AccessModule.objects.filter(is_active=True).order_by("category", "name")
+
+    @staticmethod
+    def get_allowed_module_keys(user):
+        if not user or not getattr(user, "is_authenticated", False):
+            return []
+
+        if getattr(user, "role", None) == "admin":
+            return list(
+                ModulePermissionService
+                .get_active_modules()
+                .values_list("key", flat=True)
+            )
+
+        return list(
+            UserModulePermission.objects.filter(
+                user=user,
+                module__is_active=True,
+                can_access=True,
+            ).values_list("module__key", flat=True)
+        )
+
+    @staticmethod
+    def has_module_access(user, module_key):
+        if not user or not getattr(user, "is_authenticated", False):
+            return False
+
+        if getattr(user, "role", None) == "admin":
+            return AccessModule.objects.filter(key=module_key, is_active=True).exists()
+
+        return UserModulePermission.objects.filter(
+            user=user,
+            module__key=module_key,
+            module__is_active=True,
+            can_access=True,
+        ).exists()
+
+    @staticmethod
+    def get_user_module_status(user):
+        active_modules = ModulePermissionService.get_active_modules()
+        granted_keys = set(ModulePermissionService.get_allowed_module_keys(user))
+
+        return [
+            {
+                "key": module.key,
+                "name": module.name,
+                "category": module.category,
+                "can_access": module.key in granted_keys,
+            }
+            for module in active_modules
+        ]
+
+    @staticmethod
+    def set_user_permissions(admin_user, target_user, module_keys):
+        if not admin_user or not admin_user.is_authenticated:
+            raise ValueError("Authentication required.")
+
+        if getattr(admin_user, "role", None) != "admin":
+            raise ValueError("Only admin users can manage module permissions.")
+
+        if target_user is None:
+            raise ValueError("Target user is required.")
+
+        if target_user.role != "shopkeeper":
+            raise ValueError("Permissions can only be assigned to shopkeepers.")
+
+        if target_user.tenant_id != admin_user.tenant_id:
+            raise ValueError("You cannot manage permissions for a different tenant.")
+
+        if target_user.id == admin_user.id:
+            raise ValueError("You cannot change your own module permissions.")
+
+        valid_module_keys = set(
+            ModulePermissionService.get_active_modules().values_list("key", flat=True)
+        )
+
+        invalid_keys = [key for key in module_keys if key not in valid_module_keys]
+        if invalid_keys:
+            raise ValueError(f"Invalid module keys: {', '.join(invalid_keys)}")
+
+        allowed_set = set(module_keys)
+
+        with transaction.atomic():
+            for module in ModulePermissionService.get_active_modules():
+                permission, created = UserModulePermission.objects.get_or_create(
+                    user=target_user,
+                    module=module,
+                    defaults={"can_access": module.key in allowed_set, "granted_by": admin_user},
+                )
+                permission.can_access = module.key in allowed_set
+                permission.granted_by = admin_user
+                permission.save(update_fields=["can_access", "granted_by", "updated_at"])
+
+        return ModulePermissionService.get_user_module_status(target_user)
+
 
 class ResponseFormatterService(BaseService):
 

@@ -5,6 +5,8 @@ from rest_framework.response import Response
 from .services import get_dashboard_summary
 from .serializers import DashboardSummarySerializer
 from subscriptions.repositories import SubscriptionRepository
+from subscriptions.permissions import IsSubscriptionActive
+from users.permissions import HasModuleAccess
 
 
 class DashboardSummaryAPIView(APIView):
@@ -12,7 +14,8 @@ class DashboardSummaryAPIView(APIView):
     Real-world SaaS Dashboard: Store Info, User Profile, Subscription Status,
     aur Inventory/Sales Metrics ko ek saath return karta hai.
     """
-    permission_classes = [IsAuthenticated]
+    required_module = "dashboard"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
 
     def get(self, request):
         user = request.user

@@ -1,12 +1,72 @@
 import smtplib
 import dns.resolver
 from rest_framework import serializers
-from .models import User
+from .models import User, AccessModule, UserModulePermission
 
 
 from rest_framework import serializers
 
-from .models import User
+from .models import User, AccessModule, UserModulePermission
+
+
+# =========================================================
+# MODULE ACCESS
+# =========================================================
+
+class AccessModuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AccessModule
+        fields = ["key", "name", "category", "description", "is_active"]
+
+
+class UserModulePermissionSerializer(serializers.ModelSerializer):
+    module = serializers.SerializerMethodField()
+    key = serializers.SerializerMethodField()
+    name = serializers.SerializerMethodField()
+    category = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserModulePermission
+        fields = [
+            "key",
+            "name",
+            "category",
+            "can_access",
+        ]
+
+    def get_module(self, obj):
+        return obj.module.key
+
+    def get_key(self, obj):
+        return obj.module.key
+
+    def get_name(self, obj):
+        return obj.module.name
+
+    def get_category(self, obj):
+        return obj.module.category
+
+
+class UserModulePermissionUpdateSerializer(serializers.Serializer):
+    modules = serializers.ListField(
+        child=serializers.CharField(max_length=120),
+        allow_empty=True,
+    )
+
+    def validate_modules(self, value):
+        normalized = []
+        seen = set()
+
+        for item in value:
+            key = str(item).strip()
+            if not key:
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(key)
+
+        return normalized
 
 
 # =========================================================

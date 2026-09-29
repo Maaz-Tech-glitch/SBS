@@ -22,6 +22,7 @@ from .views import (
     # Users
     UserListCreateAPIView,
     UserDetailAPIView,
+    UserModulePermissionAPIView,
 )
 
 
@@ -110,5 +111,11 @@ urlpatterns = [
         "users/<int:pk>/",
         UserDetailAPIView.as_view(),
         name="user-detail",
+    ),
+
+    path(
+        "users/<int:user_id>/module-permissions/",
+        UserModulePermissionAPIView.as_view(),
+        name="user-module-permissions",
     ),
 ]

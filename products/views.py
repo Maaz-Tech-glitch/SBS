@@ -6,6 +6,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 import django_filters
 from subscriptions.permissions import IsSubscriptionActive
+from users.permissions import HasModuleAccess
 from .models import Category, Product
 from .serializers import CategorySerializer, ProductSerializer, RestockProductSerializer
 from .permissions import IsAdminOrShopkeeper, IsAdminForDelete
@@ -14,7 +15,8 @@ from .services import restock_product, low_stock_products, out_of_stock_products
 
 class CategoryViewSet(viewsets.ModelViewSet):
     serializer_class = CategorySerializer
-    permission_classes = [IsAuthenticated, IsAdminOrShopkeeper, IsSubscriptionActive]
+    required_module = "products"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["name"]
     search_fields = ["name", "description"]
@@ -38,7 +40,8 @@ class ProductFilter(django_filters.FilterSet):
 
 class ProductViewSet(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
-    permission_classes = [IsAuthenticated, IsSubscriptionActive]
+    required_module = "products"
+    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = ProductFilter
     search_fields = ["name", "category__name", "barcode", "description"]

@@ -4,20 +4,6 @@ from .models import Invoice, InvoiceItem
 from .exceptions import InvoiceNotFoundException
 
 
-# class InvoiceRepository:
-#     @staticmethod
-#     def get_by_id(invoice_id):
-#         try:
-#             return Invoice.objects.get(id=invoice_id)
-#         except Invoice.DoesNotExist:
-#             raise InvoiceNotFoundException()
-
-#     @staticmethod
-#     def get_locked_by_id(invoice_id):
-#         try:
-#             return Invoice.objects.select_for_update().get(id=invoice_id)
-#         except Invoice.DoesNotExist:
-#             raise InvoiceNotFoundException()
 class InvoiceRepository:
     @staticmethod
     def get_by_id(invoice_id, tenant):

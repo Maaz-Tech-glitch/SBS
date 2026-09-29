@@ -1,7 +1,8 @@
-from .repositories import ProductRepository
-from accounting.services import AccountingIntegrationService
 from django.db import transaction
+from django.db.models import F
 from decimal import Decimal
+from .repositories import ProductRepository, ProductStockRepository
+from accounting.services import AccountingIntegrationService
 from .models import Product
 
 def low_stock_products(tenant):
@@ -9,23 +10,33 @@ def low_stock_products(tenant):
 
 def out_of_stock_products(tenant):
     return ProductRepository.get_out_of_stock(tenant)
-    
+
 def restock_product(product_id, quantity, user, tenant, unit_cost=None,
-            payment_method="CASH", supplier_name=None, paid_amount=None):
-        with transaction.atomic():
-            product = ProductRepository.get_by_id(product_id, tenant=tenant)
-            product.stock += quantity
-            product.save()
-            cost = unit_cost if unit_cost is not None else product.cost_price
-            total_cost = cost * quantity
-            paid = paid_amount if paid_amount is not None else total_cost  # default: full paid
-            AccountingIntegrationService.record_transaction(
-                tenant=product.tenant, user=user, transaction_type="PURCHASE",
-                amount=total_cost, paid_amount=paid, payment_method=payment_method,
-                supplier_name=supplier_name,
-                description=f"Restock: {product.name} x {quantity}",
-            )
-            return product
+                    payment_method="CASH", supplier_name=None, paid_amount=None):
+    with transaction.atomic():
+        # Row-level lock via select_for_update and atomic DB math with F() to eliminate race conditions
+        product = ProductStockRepository.get_locked_by_id(product_id, tenant=tenant)
+        product.stock = F("stock") + quantity
+        product.save(update_fields=["stock", "updated_at"])
+        product.refresh_from_db(fields=["stock"])
+
+        cost = unit_cost if unit_cost is not None else (product.cost_price if product.cost_price > 0 else product.price)
+        total_cost = cost * quantity
+
+        if paid_amount is not None:
+            paid = paid_amount
+        elif supplier_name:
+            paid = Decimal("0.00")
+        else:
+            paid = total_cost
+
+        AccountingIntegrationService.record_transaction(
+            tenant=product.tenant, user=user, transaction_type="PURCHASE",
+            amount=total_cost, paid_amount=paid, payment_method=payment_method,
+            supplier_name=supplier_name,
+            description=f"Restock: {product.name} x {quantity}",
+        )
+        return product
 
 def create_product_with_purchase(validated_data, tenant, user):
     payment_method = validated_data.pop("payment_method", "CASH")
@@ -55,30 +66,4 @@ def create_product_with_purchase(validated_data, tenant, user):
                 kwargs["supplier_name"] = supplier_name
 
             AccountingIntegrationService.record_transaction(**kwargs)
-        return product
-
-
-def restock_product(product_id, quantity, user, tenant, unit_cost=None,
-                    payment_method="CASH", supplier_name=None, paid_amount=None):
-    with transaction.atomic():
-        product = ProductRepository.get_by_id(product_id, tenant=tenant)
-        product.stock += quantity
-        product.save()
-
-        cost = unit_cost if unit_cost is not None else (product.cost_price if product.cost_price > 0 else product.price)
-        total_cost = cost * quantity
-
-        if paid_amount is not None:
-            paid = paid_amount
-        elif supplier_name:
-            paid = Decimal("0.00")
-        else:
-            paid = total_cost
-
-        AccountingIntegrationService.record_transaction(
-            tenant=product.tenant, user=user, transaction_type="PURCHASE",
-            amount=total_cost, paid_amount=paid, payment_method=payment_method,
-            supplier_name=supplier_name,
-            description=f"Restock: {product.name} x {quantity}",
-        )
         return product

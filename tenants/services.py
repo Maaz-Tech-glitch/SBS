@@ -1,17 +1,3 @@
-# from .repositories import TenantRepository
-# from .exceptions import TenantAlreadyExistsException
-
-
-# class TenantService:
-#     @staticmethod
-#     def create_tenant(name, email, phone=None, address=None, business_type=None):
-#         return TenantRepository.create(
-#             name=name, email=email, phone=phone,
-#             address=address, business_type=business_type)
-        
-#     @staticmethod
-#     def get_tenant(tenant_id):
-#         return TenantRepository.get_by_id(tenant_id)
 from .repositories import TenantRepository
 from .exceptions import TenantAlreadyExistsException
 
