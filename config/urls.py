@@ -13,6 +13,7 @@ urlpatterns = [
     path("api/tenants/", include("tenants.urls")),
     path("api/subscriptions/", include("subscriptions.urls")),
     path("api/", include("accounting.urls")),  # <-- Update: 'api/accounting/' add kar diya
+    path("api/", include("purchase_orders.urls")),
 ]
 
 if settings.DEBUG:

@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     'tenants',
     'subscriptions',
     'accounting',
+    'purchase_orders',
     "corsheaders",
 ]
 

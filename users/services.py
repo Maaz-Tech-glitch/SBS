@@ -717,6 +717,7 @@ class ModulePermissionService(BaseService):
     DEFAULT_MODULES = [
         {"key": "dashboard", "name": "Dashboard", "category": "Overview"},
         {"key": "products", "name": "Products", "category": "Inventory"},
+        {"key": "inventory.purchase_orders", "name": "Purchase Orders", "category": "Inventory"},
         {"key": "billing", "name": "Billing", "category": "Sales"},
         {"key": "accounting", "name": "Accounting", "category": "Finance"},
         {"key": "reports", "name": "Reports", "category": "Analytics"},
