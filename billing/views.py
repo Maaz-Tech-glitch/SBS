@@ -6,7 +6,8 @@ from rest_framework.generics import ListAPIView
 from rest_framework.filters import OrderingFilter, SearchFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from subscriptions.permissions import IsSubscriptionActive
-from users.permissions import HasModuleAccess
+from accounting.exceptions import AccountingException
+from accounting.notification_handlers import AccountingNotificationService
 
 from .serializers import (
     InvoiceSerializer, InvoiceDetailSerializer, InvoiceListSerializer,
@@ -18,8 +19,7 @@ from .services import InvoiceOwnershipService
 
 
 class AddItemAPIView(APIView):
-    required_module = "billing"
-    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
+    permission_classes = [IsAuthenticated , IsSubscriptionActive]
 
     def post(self, request):
         serializer = AddItemSerializer(data=request.data)
@@ -41,8 +41,7 @@ class AddItemAPIView(APIView):
 
 class PendingInvoicesAPIView(ListAPIView):
     serializer_class = InvoiceListSerializer
-    required_module = "billing"
-    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
+    permission_classes = [IsAuthenticated , IsSubscriptionActive]
     filter_backends = [OrderingFilter, SearchFilter, DjangoFilterBackend]
     ordering_fields = ["created_at", "total_amount"]
     filterset_fields = ["status"]
@@ -54,23 +53,42 @@ class PendingInvoicesAPIView(ListAPIView):
 
 
 class CompleteSaleAPIView(APIView):
-    required_module = "billing"
-    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
+    permission_classes = [IsAuthenticated , IsSubscriptionActive]
 
     def post(self, request, pk):
         serializer = CompleteSaleSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        invoice = InvoiceService.complete_sale(
-            invoice_id=pk,
-            payment_method=serializer.validated_data["payment_method"],
-            user=request.user,
+
+        try:
+            invoice = InvoiceService.complete_sale(
+                invoice_id=pk,
+                payment_method=serializer.validated_data["payment_method"],
+                user=request.user,
+            )
+
+        except AccountingException as exc:
+            # InvoiceService.complete_sale() uses transaction.atomic().
+            # By the time execution reaches here, sale + stock changes have
+            # rolled back, so the failure alert can safely survive.
+            AccountingNotificationService.sync_failure(
+                tenant=request.user.tenant,
+                actor=request.user,
+                source="SALE",
+                error=exc,
+                entity_type="INVOICE",
+                entity_id=pk,
+            )
+            raise
+
+        # Normal successful sale intentionally creates NO accounting
+        # notification. Product LOW/OUT stock alerts remain separate.
+        return Response(
+            InvoiceSerializer(invoice).data
         )
-        return Response(InvoiceSerializer(invoice).data)
 
 
 class CancelInvoiceAPIView(APIView):
-    required_module = "billing"
-    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
+    permission_classes = [IsAuthenticated , IsSubscriptionActive]
 
     def post(self, request, pk):
         invoice = InvoiceService.cancel(invoice_id=pk, user=request.user)
@@ -78,8 +96,7 @@ class CancelInvoiceAPIView(APIView):
 
 
 class GenerateInvoicePDFAPIView(APIView):
-    required_module = "billing"
-    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
+    permission_classes = [IsAuthenticated, IsSubscriptionActive]
 
     def post(self, request, pk):
         invoice = InvoiceRepository.get_by_id(pk, tenant=request.user.tenant)
@@ -91,18 +108,16 @@ class GenerateInvoicePDFAPIView(APIView):
 
 
 class GenerateThermalReceiptAPIView(APIView):
-    required_module = "billing"
-    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
+    permission_classes = [IsAuthenticated, IsSubscriptionActive]
 
     def get(self, request, pk):
         invoice = InvoiceRepository.get_by_id(pk, tenant=request.user.tenant)
         receipt = ReceiptService.generate_thermal_receipt(invoice)
         return Response({"receipt": receipt})
-    
-    
+
+
 class InvoiceDetailAPIView(APIView):
-    required_module = "billing"
-    permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
+    permission_classes = [IsAuthenticated, IsSubscriptionActive]
 
     def get(self, request, pk):
         invoice = InvoiceService.get_detail(

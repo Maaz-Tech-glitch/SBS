@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'accounting',
     'purchase_orders',
     "corsheaders",
+    "notifications.apps.NotificationsConfig",
 ]
 
 MIDDLEWARE = [

@@ -43,6 +43,22 @@ class PurchaseOrderItemSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Quantity must be at least 1.")
         return value
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+
+        # Current stock is an internal planning value. It is useful while a
+        # purchase order is still a draft, but it must not be exposed once
+        # the PO has been finalized/created for a supplier.
+        purchase_order = getattr(instance, "purchase_order", None)
+
+        if (
+            purchase_order is not None
+            and purchase_order.status != PurchaseOrder.Status.DRAFT
+        ):
+            data.pop("current_stock", None)
+
+        return data
+
 
 class PurchaseOrderListSerializer(serializers.ModelSerializer):
     supplier = serializers.CharField(source="supplier.name", read_only=True)

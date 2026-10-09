@@ -16,6 +16,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from products.models import Product
@@ -31,6 +32,20 @@ from .serializers import (
     SupplierSerializer,
 )
 from .services import PurchaseOrderService
+from .notification_handlers import PurchaseOrderNotificationService
+
+
+class PurchaseOrderPagination(PageNumberPagination):
+    """
+    Server-side pagination for the Purchase Orders management page.
+
+    The page requests 20 purchase orders at a time. page_size remains
+    configurable (capped at 100) for backward-compatible API consumers.
+    """
+    page_size = 20
+    page_size_query_param = "page_size"
+    max_page_size = 100
+    page_query_param = "page"
 
 
 class PurchaseOrderViewSet(viewsets.ModelViewSet):
@@ -41,14 +56,23 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
     filterset_fields = ["status"]
     search_fields = ["po_number", "supplier__name", "created_by__username", "created_by__first_name", "created_by__last_name"]
     ordering_fields = ["created_at", "po_number", "status"]
+    pagination_class = PurchaseOrderPagination
 
     def get_queryset(self):
-        return (
-            PurchaseOrder.objects.filter(tenant=self.request.user.tenant)
+        queryset = (
+            PurchaseOrder.objects
+            .filter(tenant=self.request.user.tenant)
             .select_related("supplier", "created_by", "tenant")
-            .prefetch_related("items__product")
             .annotate(item_count=Count("items", distinct=True))
         )
+
+        # List serializer only needs item_count, not every PurchaseOrderItem
+        # and Product object. Avoid prefetching those rows for the 20-row list.
+        # Detail/create/finalize/PDF flows keep the existing item prefetch.
+        if getattr(self, "action", None) != "list":
+            queryset = queryset.prefetch_related("items__product")
+
+        return queryset
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -66,13 +90,79 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         except (PurchaseOrder.DoesNotExist, ValueError):
             raise NotFound("Purchase order not found.")
 
+    def perform_create(self, serializer):
+        try:
+            with transaction.atomic():
+                order = serializer.save()
+
+                PurchaseOrderNotificationService.schedule_draft_created(
+                    order=order,
+                    actor=self.request.user,
+                )
+
+        except Exception as exc:
+            PurchaseOrderNotificationService.schedule_failure(
+                tenant=self.request.user.tenant,
+                actor=self.request.user,
+                operation="DRAFT_CREATE",
+                error=exc,
+            )
+            raise
+
+    def perform_update(self, serializer):
+        order_before = serializer.instance
+
+        changed_fields = list(
+            serializer.validated_data.keys()
+        )
+
+        try:
+            with transaction.atomic():
+                order = serializer.save()
+
+                PurchaseOrderNotificationService.schedule_updated(
+                    order=order,
+                    actor=self.request.user,
+                    changed_fields=changed_fields,
+                )
+
+        except Exception as exc:
+            PurchaseOrderNotificationService.schedule_failure(
+                tenant=self.request.user.tenant,
+                actor=self.request.user,
+                operation="UPDATE",
+                error=exc,
+                order=order_before,
+            )
+            raise
+
     @action(detail=False, methods=["post"], url_path="create-final")
     def create_final(self, request):
         serializer = PurchaseOrderSerializer(data=request.data, context=self.get_serializer_context())
         serializer.is_valid(raise_exception=True)
-        with transaction.atomic():
-            order = serializer.save()
-            order = PurchaseOrderService.finalize(order.pk, request.user.tenant)
+
+        try:
+            with transaction.atomic():
+                order = serializer.save()
+                order = PurchaseOrderService.finalize(
+                    order.pk,
+                    request.user.tenant,
+                )
+
+                PurchaseOrderNotificationService.schedule_created_final(
+                    order=order,
+                    actor=request.user,
+                )
+
+        except Exception as exc:
+            PurchaseOrderNotificationService.schedule_failure(
+                tenant=request.user.tenant,
+                actor=request.user,
+                operation="CREATE_FINAL",
+                error=exc,
+            )
+            raise
+
         order = self.get_queryset().get(pk=order.pk)
         return Response(
             PurchaseOrderSerializer(order, context=self.get_serializer_context()).data,
@@ -81,21 +171,99 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def discard(self, request, pk=None):
-        discarded = PurchaseOrderService.discard(pk, request.user.tenant)
-        if discarded is None:
+        order = (
+            self.get_queryset()
+            .filter(pk=pk)
+            .first()
+        )
+
+        if order is None:
             raise NotFound("Purchase order not found.")
-        return Response(status=status.HTTP_204_NO_CONTENT)
+
+        order_data = (
+            PurchaseOrderNotificationService
+            ._safe_order_data(order)
+        )
+
+        try:
+            with transaction.atomic():
+                discarded = PurchaseOrderService.discard(
+                    pk,
+                    request.user.tenant,
+                )
+
+                if discarded is None:
+                    raise NotFound(
+                        "Purchase order not found."
+                    )
+
+                PurchaseOrderNotificationService.schedule_discarded(
+                    tenant=request.user.tenant,
+                    actor=request.user,
+                    order_data=order_data,
+                )
+
+        except NotFound:
+            raise
+
+        except Exception as exc:
+            PurchaseOrderNotificationService.schedule_failure(
+                tenant=request.user.tenant,
+                actor=request.user,
+                operation="DISCARD",
+                error=exc,
+                order=order,
+            )
+            raise
+
+        return Response(
+            status=status.HTTP_204_NO_CONTENT
+        )
 
     @action(detail=True, methods=["post"], url_path="finalize")
     def finalize(self, request, pk=None):
         order = self.get_object()
-        serializer = self.get_serializer(order, data=request.data, partial=True)
+        serializer = self.get_serializer(
+            order,
+            data=request.data,
+            partial=True,
+        )
         serializer.is_valid(raise_exception=True)
-        with transaction.atomic():
-            order = serializer.save()
-            order = PurchaseOrderService.finalize(order.pk, request.user.tenant)
-        order = self.get_queryset().get(pk=order.pk)
-        return Response(PurchaseOrderSerializer(order, context=self.get_serializer_context()).data)
+
+        try:
+            with transaction.atomic():
+                order = serializer.save()
+
+                order = PurchaseOrderService.finalize(
+                    order.pk,
+                    request.user.tenant,
+                )
+
+                PurchaseOrderNotificationService.schedule_finalized(
+                    order=order,
+                    actor=request.user,
+                )
+
+        except Exception as exc:
+            PurchaseOrderNotificationService.schedule_failure(
+                tenant=request.user.tenant,
+                actor=request.user,
+                operation="FINALIZE",
+                error=exc,
+                order=order,
+            )
+            raise
+
+        order = self.get_queryset().get(
+            pk=order.pk
+        )
+
+        return Response(
+            PurchaseOrderSerializer(
+                order,
+                context=self.get_serializer_context(),
+            ).data
+        )
 
     @action(detail=True, methods=["get"])
     def pdf(self, request, pk=None):

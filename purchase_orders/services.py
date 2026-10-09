@@ -44,4 +44,4 @@ class PurchaseOrderService:
         if order.status != PurchaseOrder.Status.DRAFT or order.po_number is not None:
             raise ValidationError("Only an unnumbered draft can be discarded.")
         order.delete()
-        return True
+        return True         

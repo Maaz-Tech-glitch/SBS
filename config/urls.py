@@ -5,15 +5,16 @@ from django.urls import include, path
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("api/", include("users.urls")),      # <-- Update: 'api/users/' ki jagah 'api/' kar diya
+    path("api/", include("users.urls")),      
     path("api/", include("products.urls")),
     path("api/billing/", include("billing.urls")),
     path("api/dashboard/", include("dashboard.urls")),
     path("api/reports/", include("reports.urls")),
     path("api/tenants/", include("tenants.urls")),
     path("api/subscriptions/", include("subscriptions.urls")),
-    path("api/", include("accounting.urls")),  # <-- Update: 'api/accounting/' add kar diya
+    path("api/", include("accounting.urls")), 
     path("api/", include("purchase_orders.urls")),
+    path("api/", include("notifications.urls")),
 ]
 
 if settings.DEBUG:

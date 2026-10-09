@@ -29,6 +29,14 @@ from .services import (
     SubscriptionService,
 )
 
+from .exceptions import (
+    PaymentFailedException,
+)
+
+from .notification_handlers import (
+    SubscriptionNotificationService,
+)
+
 
 # =========================================================
 # PLANS
@@ -102,27 +110,71 @@ class SubscribeAPIView(
             serializer.validated_data
         )
 
-        subscription = (
-            SubscriptionService
-            .subscribe(
-                tenant=
-                    request.user.tenant,
-
-                plan_id=
-                    data["plan_id"],
-
-                payment_method=
-                    data.get(
-                        "payment_method"
-                    ),
-
-                use_trial=
-                    data.get(
-                        "use_trial",
-                        False
-                    ),
-            )
+        tenant = (
+            request.user.tenant
         )
+
+        try:
+            subscription = (
+                SubscriptionService
+                .subscribe(
+                    tenant=
+                        tenant,
+
+                    plan_id=
+                        data["plan_id"],
+
+                    payment_method=
+                        data.get(
+                            "payment_method"
+                        ),
+
+                    # Existing trial flow preserved exactly.
+                    use_trial=
+                        data.get(
+                            "use_trial",
+                            False
+                        ),
+                )
+            )
+
+        except PaymentFailedException as exc:
+
+            try:
+                (
+                    SubscriptionNotificationService
+                    .payment_failed(
+                        tenant=tenant,
+                        actor=request.user,
+                        plan_id=data["plan_id"],
+                        payment_method=data.get(
+                            "payment_method"
+                        ),
+                        error=exc,
+                    )
+                )
+            except Exception:
+                # Notification system must not replace
+                # the original payment exception.
+                pass
+
+            raise
+
+        try:
+            (
+                SubscriptionNotificationService
+                .subscription_activated(
+                    subscription=
+                        subscription,
+
+                    actor=
+                        request.user,
+                )
+            )
+        except Exception:
+            # Successful trial/subscription must never fail
+            # because a notification could not be created.
+            pass
 
         return Response(
             {
@@ -208,6 +260,22 @@ class CancelSubscriptionAPIView(APIView):
                 request.user.tenant
             )
         )
+
+        try:
+            (
+                SubscriptionNotificationService
+                .subscription_cancelled(
+                    subscription=
+                        subscription,
+
+                    actor=
+                        request.user,
+                )
+            )
+        except Exception:
+            # Existing cancellation result stays successful
+            # even if notification creation fails.
+            pass
 
         return Response(
             {

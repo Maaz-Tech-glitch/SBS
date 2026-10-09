@@ -1,13 +1,38 @@
 from django.urls import path
-from .views import PlanListAPIView, SubscribeAPIView, CurrentSubscriptionAPIView, SubscriptionHistoryAPIView , CancelSubscriptionAPIView
+
+from .views import (
+    PlanListAPIView,
+    SubscribeAPIView,
+    CurrentSubscriptionAPIView,
+    SubscriptionHistoryAPIView,
+    CancelSubscriptionAPIView,
+)
+
+
 urlpatterns = [
-    path("plans/", PlanListAPIView.as_view(), name="plan-list"),
-    path("", SubscribeAPIView.as_view(), name="subscribe"),
-    path("active/", CurrentSubscriptionAPIView.as_view(), name="current-subscription"),
-    path("history/", SubscriptionHistoryAPIView.as_view(), name="subscription-history"),
     path(
-    "cancel/",
-    CancelSubscriptionAPIView.as_view(),
-    name="cancel-subscription"
-),
+        "plans/",
+        PlanListAPIView.as_view(),
+        name="plan-list",
+    ),
+    path(
+        "",
+        SubscribeAPIView.as_view(),
+        name="subscribe",
+    ),
+    path(
+        "active/",
+        CurrentSubscriptionAPIView.as_view(),
+        name="current-subscription",
+    ),
+    path(
+        "history/",
+        SubscriptionHistoryAPIView.as_view(),
+        name="subscription-history",
+    ),
+    path(
+        "cancel/",
+        CancelSubscriptionAPIView.as_view(),
+        name="cancel-subscription",
+    ),
 ]

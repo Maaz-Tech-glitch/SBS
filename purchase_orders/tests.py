@@ -196,6 +196,28 @@ class PurchaseOrderAPITests(TestCase):
             404,
         )
 
+    def test_purchase_order_list_is_paginated_twenty_per_page(self):
+        self.authenticate()
+
+        for index in range(25):
+            PurchaseOrder.objects.create(
+                tenant=self.tenant,
+                supplier=self.supplier,
+                created_by=self.user,
+                notes=f"Order {index}",
+            )
+
+        response = self.client.get(
+            "/api/purchase-orders/?page=1&page_size=20"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 25)
+        self.assertEqual(len(response.data["results"]), 20)
+        self.assertIsNotNone(response.data["next"])
+        self.assertIsNone(response.data["previous"])
+
+
     def test_subscription_and_module_permissions_are_enforced(self):
         self.authenticate(self.other_user)
         denied_module = self.client.get("/api/purchase-orders/")

@@ -14,6 +14,8 @@ from .serializers import (
     TransactionSerializer,
 )
 from .services import JournalEntryService, LedgerService, AccountingIntegrationService
+from .exceptions import AccountingException
+from .notification_handlers import AccountingNotificationService
 from .repositories import (
     AccountRepository, JournalEntryRepository,
     JournalEntryLineRepository, AccountTypeRepository,
@@ -47,15 +49,37 @@ class JournalEntryListAPIView(ListCreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        entry = JournalEntryService.create_entry(
-            tenant=request.user.tenant,
-            date=data["date"],
-            description=data.get("description", ""),
-            lines=data["lines"],
-            created_by=request.user,
+
+        try:
+            entry = JournalEntryService.create_entry(
+                tenant=request.user.tenant,
+                date=data["date"],
+                description=data.get("description", ""),
+                lines=data["lines"],
+                created_by=request.user,
+                auto_post=data.get("auto_post", False),
+            )
+
+        except AccountingException as exc:
+            AccountingNotificationService.journal_failure(
+                tenant=request.user.tenant,
+                actor=request.user,
+                operation="CREATE",
+                error=exc,
+            )
+            raise
+
+        AccountingNotificationService.schedule_journal_created(
+            entry=entry,
+            actor=request.user,
+            line_count=len(data["lines"]),
             auto_post=data.get("auto_post", False),
         )
-        return Response(JournalEntryDetailSerializer(entry).data, status=status.HTTP_201_CREATED)
+
+        return Response(
+            JournalEntryDetailSerializer(entry).data,
+            status=status.HTTP_201_CREATED,
+        )
 class JournalEntryDetailAPIView(APIView):
     required_module = "accounting"
     permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
@@ -67,16 +91,60 @@ class JournalEntryPostAPIView(APIView):
     required_module = "accounting"
     permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     def post(self, request, pk):
-        entry = JournalEntryService.post_entry(pk, request.user.tenant)
-        return Response(JournalEntryDetailSerializer(entry).data)
+        try:
+            entry = JournalEntryService.post_entry(
+                pk,
+                request.user.tenant,
+            )
+
+        except AccountingException as exc:
+            AccountingNotificationService.journal_failure(
+                tenant=request.user.tenant,
+                actor=request.user,
+                operation="POST",
+                error=exc,
+                entry_id=pk,
+            )
+            raise
+
+        AccountingNotificationService.schedule_journal_posted(
+            entry=entry,
+            actor=request.user,
+        )
+
+        return Response(
+            JournalEntryDetailSerializer(entry).data
+        )
 
 
 class JournalEntryVoidAPIView(APIView):
     required_module = "accounting"
     permission_classes = [IsAuthenticated, IsSubscriptionActive, HasModuleAccess]
     def post(self, request, pk):
-        entry = JournalEntryService.void_entry(pk, request.user.tenant)
-        return Response(JournalEntryDetailSerializer(entry).data)
+        try:
+            entry = JournalEntryService.void_entry(
+                pk,
+                request.user.tenant,
+            )
+
+        except AccountingException as exc:
+            AccountingNotificationService.journal_failure(
+                tenant=request.user.tenant,
+                actor=request.user,
+                operation="VOID",
+                error=exc,
+                entry_id=pk,
+            )
+            raise
+
+        AccountingNotificationService.schedule_journal_voided(
+            entry=entry,
+            actor=request.user,
+        )
+
+        return Response(
+            JournalEntryDetailSerializer(entry).data
+        )
 
 class TrialBalanceAPIView(APIView):
     required_module = "accounting"
@@ -92,13 +160,41 @@ class TransactionAPIView(APIView):
     def post(self, request):
         serializer = TransactionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
+
+        data = dict(serializer.validated_data)
         transaction_type = data.pop("transaction_type")
-        entry = AccountingIntegrationService.record_transaction(
-            tenant=request.user.tenant, user=request.user,
-            transaction_type=transaction_type, **data,
+
+        try:
+            entry = AccountingIntegrationService.record_transaction(
+                tenant=request.user.tenant,
+                user=request.user,
+                transaction_type=transaction_type,
+                **data,
+            )
+
+        except AccountingException as exc:
+            AccountingNotificationService.manual_transaction_failure(
+                tenant=request.user.tenant,
+                actor=request.user,
+                transaction_type=transaction_type,
+                error=exc,
+                amount=data.get("amount"),
+                payment_method=data.get("payment_method"),
+            )
+            raise
+
+        AccountingNotificationService.schedule_manual_transaction_recorded(
+            entry=entry,
+            actor=request.user,
+            transaction_type=transaction_type,
+            amount=data.get("amount"),
+            payment_method=data.get("payment_method"),
         )
-        return Response(JournalEntryDetailSerializer(entry).data, status=status.HTTP_201_CREATED)
+
+        return Response(
+            JournalEntryDetailSerializer(entry).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class LedgerAPIView(ListAPIView):
