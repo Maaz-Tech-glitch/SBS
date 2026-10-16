@@ -93,4 +93,118 @@ class InvoiceItem(models.Model):
         return self.total_price - item_cost
     def __str__(self):
         return f"{self.invoice.invoice_number} - {self.product.name}"
-    
+
+class SaleReturn(models.Model):
+    """
+    Immutable header for a completed-sale return/refund.
+
+    The original Invoice remains COMPLETED and unchanged. Every return is a
+    separate document linked back to that invoice.
+    """
+    tenant = models.ForeignKey(
+        "tenants.Tenant",
+        on_delete=models.CASCADE,
+        related_name="sale_returns",
+    )
+    invoice = models.ForeignKey(
+        Invoice,
+        on_delete=models.PROTECT,
+        related_name="returns",
+    )
+    return_number = models.CharField(max_length=40, unique=True, blank=True)
+    request_id = models.UUIDField()
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="sale_returns_created",
+    )
+    refund_method = models.CharField(
+        max_length=20,
+        choices=Invoice.PAYMENT_CHOICES,
+    )
+    reason = models.CharField(max_length=255, blank=True, default="")
+    total_refund = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "request_id"],
+                name="uniq_return_request_per_tenant",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["tenant", "-created_at"],
+                name="ret_tenant_created_idx",
+            ),
+            models.Index(
+                fields=["invoice", "-created_at"],
+                name="ret_invoice_created_idx",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+
+        if not self.return_number:
+            self.return_number = f"TEMP-{uuid.uuid4().hex[:12]}"
+
+        super().save(*args, **kwargs)
+
+        if is_new and self.return_number.startswith("TEMP-"):
+            self.return_number = f"RET-{self.pk:06d}"
+            super().save(update_fields=["return_number"])
+
+    def __str__(self):
+        return f"{self.return_number} - {self.invoice.invoice_number}"
+
+
+class SaleReturnItem(models.Model):
+    sale_return = models.ForeignKey(
+        SaleReturn,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    invoice_item = models.ForeignKey(
+        InvoiceItem,
+        on_delete=models.PROTECT,
+        related_name="return_items",
+    )
+    quantity = models.PositiveIntegerField()
+    # Effective net sold price after item-level AND invoice-level discounts.
+    # Four decimals preserve fair proportional pricing; refund_amount is money.
+    refund_unit_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+    )
+    refund_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["sale_return", "invoice_item"],
+                name="uniq_item_once_per_return",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["invoice_item"],
+                name="ret_item_invoice_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.sale_return.return_number} - "
+            f"{self.invoice_item.product.name} x {self.quantity}"
+        )
+

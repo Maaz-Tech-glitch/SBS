@@ -12,8 +12,9 @@ from accounting.notification_handlers import AccountingNotificationService
 from .serializers import (
     InvoiceSerializer, InvoiceDetailSerializer, InvoiceListSerializer,
     CompleteSaleSerializer, AddItemSerializer,
+    CreateSaleReturnSerializer, SaleReturnSerializer,
 )
-from .services import InvoiceService, ReceiptService
+from .services import InvoiceService, ReceiptService, ReturnService
 from .repositories import InvoiceRepository
 from .services import InvoiceOwnershipService
 
@@ -129,3 +130,65 @@ class InvoiceDetailAPIView(APIView):
             InvoiceDetailSerializer(invoice).data,
             status=status.HTTP_200_OK
         )
+
+class InvoiceReturnsAPIView(APIView):
+    """
+    GET  -> returnable quantities, effective refund pricing and return history
+    POST -> create one atomic partial/full multi-item return
+    """
+    permission_classes = [IsAuthenticated, IsSubscriptionActive]
+
+    def get(self, request, pk):
+        snapshot = ReturnService.get_snapshot(
+            invoice_id=pk,
+            user=request.user,
+        )
+
+        # Serialize model objects in return history before sending the response.
+        snapshot["returns"] = SaleReturnSerializer(
+            snapshot["returns"],
+            many=True,
+        ).data
+
+        return Response(
+            snapshot,
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request, pk):
+        serializer = CreateSaleReturnSerializer(
+            data=request.data
+        )
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            sale_return, created = ReturnService.create_return(
+                invoice_id=pk,
+                request_id=data["request_id"],
+                items=data["items"],
+                reason=data.get("reason", ""),
+                user=request.user,
+            )
+        except AccountingException as exc:
+            # ReturnService is atomic. Reaching here means the return rows and
+            # restored stock have rolled back, so this alert can safely survive.
+            AccountingNotificationService.sync_failure(
+                tenant=request.user.tenant,
+                actor=request.user,
+                source="SALE_RETURN",
+                error=exc,
+                entity_type="INVOICE",
+                entity_id=pk,
+            )
+            raise
+
+        return Response(
+            SaleReturnSerializer(sale_return).data,
+            status=(
+                status.HTTP_201_CREATED
+                if created
+                else status.HTTP_200_OK
+            ),
+        )
+

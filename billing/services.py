@@ -220,10 +220,11 @@
 #         return "\n".join(receipt)
 
 import os
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Sum
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
@@ -234,6 +235,8 @@ from .repositories import (
     InvoiceRepository,
     InvoiceItemRepository,
     ProductStockRepository,
+    SaleReturnRepository,
+    SaleReturnItemRepository,
 )
 from .strategies import DiscountFactory
 from .exceptions import (
@@ -241,6 +244,10 @@ from .exceptions import (
     InvalidInvoiceStateException,
     InsufficientStockException,
     EmptyInvoiceException,
+    ReturnNotAllowedException,
+    InvalidReturnQuantityException,
+    ReturnItemNotFoundException,
+    ReturnRequestConflictException,
 )
 
 
@@ -683,3 +690,428 @@ class ReceiptService:
         ]
 
         return "\n".join(receipt)
+
+class ReturnService:
+    MONEY_QUANT = Decimal("0.01")
+    UNIT_QUANT = Decimal("0.0001")
+
+    @staticmethod
+    def _ensure_completed(invoice):
+        if invoice.status != "COMPLETED":
+            raise ReturnNotAllowedException(
+                "Only COMPLETED invoices can be returned."
+            )
+
+    @classmethod
+    def _allocate_invoice_net_totals(cls, invoice, invoice_items):
+        """
+        Allocate the invoice-level discount across items proportionally.
+
+        InvoiceItem.total_price already includes item-level discount.
+        Invoice.final_amount additionally includes invoice-level discount.
+        The final item absorbs any one-cent rounding remainder so returning all
+        products always totals exactly invoice.final_amount.
+        """
+        items = list(invoice_items)
+
+        if not items:
+            return {}
+
+        total_amount = Decimal(invoice.total_amount or 0)
+        final_amount = Decimal(invoice.final_amount or 0)
+
+        if total_amount <= 0 or final_amount <= 0:
+            return {item.id: Decimal("0.00") for item in items}
+
+        allocations = {}
+        remaining = final_amount.quantize(
+            cls.MONEY_QUANT,
+            rounding=ROUND_HALF_UP,
+        )
+
+        for index, item in enumerate(items):
+            if index == len(items) - 1:
+                allocated = remaining
+            else:
+                allocated = (
+                    final_amount
+                    * Decimal(item.total_price)
+                    / total_amount
+                ).quantize(
+                    cls.MONEY_QUANT,
+                    rounding=ROUND_HALF_UP,
+                )
+                allocated = max(
+                    Decimal("0.00"),
+                    min(allocated, remaining),
+                )
+
+            allocations[item.id] = allocated
+            remaining -= allocated
+
+        return allocations
+
+    @staticmethod
+    def _returned_totals(invoice_item_ids):
+        if not invoice_item_ids:
+            return {}
+
+        from .models import SaleReturnItem
+
+        rows = (
+            SaleReturnItem.objects
+            .filter(invoice_item_id__in=invoice_item_ids)
+            .values("invoice_item_id")
+            .annotate(
+                returned_quantity=Sum("quantity"),
+                refunded_amount=Sum("refund_amount"),
+            )
+        )
+
+        return {
+            row["invoice_item_id"]: {
+                "quantity": int(row["returned_quantity"] or 0),
+                "amount": Decimal(row["refunded_amount"] or 0),
+            }
+            for row in rows
+        }
+
+    @classmethod
+    def get_snapshot(cls, invoice_id, user):
+        invoice = InvoiceRepository.get_by_id(
+            invoice_id,
+            tenant=user.tenant,
+        )
+        cls._ensure_completed(invoice)
+
+        invoice_items = list(
+            invoice.items
+            .select_related("product")
+            .order_by("id")
+        )
+
+        allocations = cls._allocate_invoice_net_totals(
+            invoice,
+            invoice_items,
+        )
+        returned = cls._returned_totals(
+            [item.id for item in invoice_items]
+        )
+
+        item_rows = []
+        total_sold_quantity = 0
+        total_returned_quantity = 0
+
+        for item in invoice_items:
+            state = returned.get(
+                item.id,
+                {"quantity": 0, "amount": Decimal("0.00")},
+            )
+            already_returned = state["quantity"]
+            available = max(
+                int(item.quantity) - already_returned,
+                0,
+            )
+            allocated_total = allocations.get(
+                item.id,
+                Decimal("0.00"),
+            )
+            remaining_refund = max(
+                allocated_total - state["amount"],
+                Decimal("0.00"),
+            )
+
+            if available > 0:
+                effective_unit = (
+                    remaining_refund / Decimal(available)
+                ).quantize(
+                    cls.UNIT_QUANT,
+                    rounding=ROUND_HALF_UP,
+                )
+            else:
+                effective_unit = Decimal("0.0000")
+
+            total_sold_quantity += int(item.quantity)
+            total_returned_quantity += already_returned
+
+            item_rows.append({
+                "invoice_item_id": item.id,
+                "product_id": item.product_id,
+                "product_name": item.product.name,
+                "sold_quantity": int(item.quantity),
+                "already_returned_quantity": already_returned,
+                "returnable_quantity": available,
+                "original_unit_price": item.unit_price,
+                "original_item_total": item.total_price,
+                "refund_unit_price": effective_unit,
+                "remaining_refundable_amount": remaining_refund,
+            })
+
+        if total_returned_quantity == 0:
+            return_status = "NONE"
+        elif (
+            total_sold_quantity > 0
+            and total_returned_quantity >= total_sold_quantity
+        ):
+            return_status = "FULL"
+        else:
+            return_status = "PARTIAL"
+
+        return {
+            "invoice_id": invoice.id,
+            "invoice_number": invoice.invoice_number,
+            "invoice_status": invoice.status,
+            "payment_method": invoice.payment_method,
+            "original_total": invoice.total_amount,
+            "original_final_amount": invoice.final_amount,
+            "return_status": return_status,
+            "items": item_rows,
+            "returns": list(
+                SaleReturnRepository.list_by_invoice(invoice)
+            ),
+        }
+
+    @classmethod
+    def create_return(
+        cls,
+        *,
+        invoice_id,
+        request_id,
+        items,
+        reason,
+        user,
+    ):
+        """
+        Atomic + idempotent return processing.
+
+        Lock order:
+          1. invoice
+          2. all invoice items
+          3. affected products sorted by product_id
+
+        The invoice lock serializes concurrent returns for the same invoice,
+        preventing two requests from returning the same sold quantity twice.
+        """
+        with transaction.atomic():
+            invoice = InvoiceRepository.get_locked_by_id(
+                invoice_id,
+                tenant=user.tenant,
+            )
+            cls._ensure_completed(invoice)
+
+            # Double-click / network retry safety.
+            existing = SaleReturnRepository.get_by_request_id(
+                user.tenant,
+                request_id,
+            )
+            if existing:
+                if existing.invoice_id != invoice.id:
+                    raise ReturnRequestConflictException()
+                return existing, False
+
+            invoice_items = list(
+                InvoiceItemRepository.list_locked_for_invoice(
+                    invoice
+                )
+            )
+
+            if not invoice_items:
+                raise ReturnItemNotFoundException(
+                    "This invoice has no returnable items."
+                )
+
+            invoice_item_map = {
+                item.id: item
+                for item in invoice_items
+            }
+
+            requested_item_ids = [
+                int(item["invoice_item_id"])
+                for item in items
+            ]
+
+            if len(requested_item_ids) != len(set(requested_item_ids)):
+                raise ReturnItemNotFoundException(
+                    "The same invoice item cannot be returned twice in one request."
+                )
+
+            missing_ids = [
+                item_id
+                for item_id in requested_item_ids
+                if item_id not in invoice_item_map
+            ]
+
+            if missing_ids:
+                raise ReturnItemNotFoundException(
+                    "One or more selected items do not belong to this invoice."
+                )
+
+            allocations = cls._allocate_invoice_net_totals(
+                invoice,
+                invoice_items,
+            )
+            returned = cls._returned_totals(
+                [item.id for item in invoice_items]
+            )
+
+            # Validate every quantity before changing stock or creating rows.
+            prepared = []
+
+            for requested in items:
+                item = invoice_item_map[
+                    int(requested["invoice_item_id"])
+                ]
+                return_quantity = int(requested["quantity"])
+
+                state = returned.get(
+                    item.id,
+                    {"quantity": 0, "amount": Decimal("0.00")},
+                )
+                already_returned = state["quantity"]
+                available_quantity = (
+                    int(item.quantity) - already_returned
+                )
+
+                if (
+                    return_quantity <= 0
+                    or return_quantity > available_quantity
+                ):
+                    raise InvalidReturnQuantityException(
+                        (
+                            f"{item.product.name}: sold {item.quantity}, "
+                            f"already returned {already_returned}, "
+                            f"available to return {max(available_quantity, 0)}."
+                        )
+                    )
+
+                allocated_total = allocations.get(
+                    item.id,
+                    Decimal("0.00"),
+                )
+                remaining_refund = max(
+                    allocated_total - state["amount"],
+                    Decimal("0.00"),
+                )
+
+                # If this return finishes the item, refund the exact remainder
+                # so repeated partial returns never create a rounding mismatch.
+                if return_quantity == available_quantity:
+                    refund_amount = remaining_refund
+                elif available_quantity > 0:
+                    refund_amount = (
+                        remaining_refund
+                        * Decimal(return_quantity)
+                        / Decimal(available_quantity)
+                    ).quantize(
+                        cls.MONEY_QUANT,
+                        rounding=ROUND_HALF_UP,
+                    )
+                else:
+                    refund_amount = Decimal("0.00")
+
+                refund_amount = refund_amount.quantize(
+                    cls.MONEY_QUANT,
+                    rounding=ROUND_HALF_UP,
+                )
+
+                refund_unit_price = (
+                    (
+                        refund_amount / Decimal(return_quantity)
+                    ).quantize(
+                        cls.UNIT_QUANT,
+                        rounding=ROUND_HALF_UP,
+                    )
+                    if return_quantity
+                    else Decimal("0.0000")
+                )
+
+                prepared.append({
+                    "invoice_item": item,
+                    "quantity": return_quantity,
+                    "refund_amount": refund_amount,
+                    "refund_unit_price": refund_unit_price,
+                })
+
+            # Lock all affected products in stable order to reduce deadlock risk.
+            locked_products = {}
+            for product_id in sorted({
+                row["invoice_item"].product_id
+                for row in prepared
+            }):
+                locked_products[product_id] = (
+                    ProductStockRepository.get_locked_by_id(
+                        product_id,
+                        tenant=invoice.tenant,
+                    )
+                )
+
+            sale_return = SaleReturnRepository.create(
+                tenant=invoice.tenant,
+                invoice=invoice,
+                request_id=request_id,
+                created_by=user,
+                refund_method=invoice.payment_method,
+                reason=reason or "",
+            )
+
+            total_refund = Decimal("0.00")
+
+            for row in prepared:
+                invoice_item = row["invoice_item"]
+                product = locked_products[
+                    invoice_item.product_id
+                ]
+
+                product.stock = (
+                    int(product.stock)
+                    + int(row["quantity"])
+                )
+                product.save(
+                    update_fields=["stock", "updated_at"]
+                )
+
+                SaleReturnItemRepository.create(
+                    sale_return=sale_return,
+                    invoice_item=invoice_item,
+                    quantity=row["quantity"],
+                    refund_unit_price=row["refund_unit_price"],
+                    refund_amount=row["refund_amount"],
+                )
+
+                total_refund += row["refund_amount"]
+
+            total_refund = total_refund.quantize(
+                cls.MONEY_QUANT,
+                rounding=ROUND_HALF_UP,
+            )
+            sale_return.total_refund = total_refund
+            sale_return.save(
+                update_fields=["total_refund"]
+            )
+
+            # The refund is sent back through the original payment method.
+            # If accounting fails, this outer atomic block rolls back the
+            # return rows AND all stock restoration.
+            if total_refund > 0:
+                AccountingIntegrationService.record_transaction(
+                    tenant=invoice.tenant,
+                    user=user,
+                    transaction_type="SALE_RETURN",
+                    invoice=invoice,
+                    amount=total_refund,
+                    payment_method=invoice.payment_method,
+                    return_number=sale_return.return_number,
+                    description=(
+                        f"Sale Return {sale_return.return_number} "
+                        f"for Invoice {invoice.invoice_number}"
+                    ),
+                )
+
+            return (
+                SaleReturnRepository.get_detailed(
+                    sale_return.id,
+                    invoice.tenant,
+                ),
+                True,
+            )
+

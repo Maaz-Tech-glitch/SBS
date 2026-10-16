@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Invoice, InvoiceItem
+from .models import Invoice, InvoiceItem, SaleReturn, SaleReturnItem
 
 
 class InvoiceSerializer(serializers.ModelSerializer):
@@ -107,4 +107,93 @@ class InvoiceListSerializer(serializers.ModelSerializer):
 class CompleteSaleSerializer(serializers.Serializer):
     payment_method = serializers.ChoiceField(choices=["CASH", "CARD", "ONLINE"])
 
+class SaleReturnItemInputSerializer(serializers.Serializer):
+    invoice_item_id = serializers.IntegerField(min_value=1)
+    quantity = serializers.IntegerField(min_value=1)
+
+
+class CreateSaleReturnSerializer(serializers.Serializer):
+    # The frontend must generate one UUID for a confirmation attempt and reuse
+    # it if the same request is retried/double-clicked.
+    request_id = serializers.UUIDField()
+    reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=255,
+        default="",
+    )
+    items = SaleReturnItemInputSerializer(
+        many=True,
+        allow_empty=False,
+    )
+
+    def validate_items(self, value):
+        item_ids = [item["invoice_item_id"] for item in value]
+
+        if len(item_ids) != len(set(item_ids)):
+            raise serializers.ValidationError(
+                "The same invoice item cannot appear more than once in one return."
+            )
+
+        return value
+
+
+class SaleReturnItemSerializer(serializers.ModelSerializer):
+    invoice_item_id = serializers.IntegerField(read_only=True)
+    product_id = serializers.IntegerField(
+        source="invoice_item.product_id",
+        read_only=True,
+    )
+    product_name = serializers.CharField(
+        source="invoice_item.product.name",
+        read_only=True,
+    )
+    original_unit_price = serializers.DecimalField(
+        source="invoice_item.unit_price",
+        max_digits=10,
+        decimal_places=2,
+        read_only=True,
+    )
+
+    class Meta:
+        model = SaleReturnItem
+        fields = [
+            "id",
+            "invoice_item_id",
+            "product_id",
+            "product_name",
+            "quantity",
+            "original_unit_price",
+            "refund_unit_price",
+            "refund_amount",
+        ]
+
+
+class SaleReturnSerializer(serializers.ModelSerializer):
+    items = SaleReturnItemSerializer(many=True, read_only=True)
+    invoice_number = serializers.CharField(
+        source="invoice.invoice_number",
+        read_only=True,
+    )
+    created_by_name = serializers.CharField(
+        source="created_by.username",
+        read_only=True,
+    )
+
+    class Meta:
+        model = SaleReturn
+        fields = [
+            "id",
+            "return_number",
+            "request_id",
+            "invoice",
+            "invoice_number",
+            "refund_method",
+            "reason",
+            "total_refund",
+            "created_by_name",
+            "items",
+            "created_at",
+        ]
+        read_only_fields = fields
 

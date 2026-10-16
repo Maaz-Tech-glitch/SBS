@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from .constants import SystemAccountCodes, PAYMENT_METHOD_ACCOUNT_MAP
+from accounting.constants import SystemAccountCodes, PAYMENT_METHOD_ACCOUNT_MAP
 from .repositories import AccountRepository
 from .exceptions import AccountingException
 
@@ -24,6 +24,48 @@ class SaleStrategy(TransactionStrategy):
             "narration": "Sales revenue"},
         ]
         return f"Sale - Invoice {invoice.invoice_number}", lines, invoice
+
+class SaleReturnStrategy(TransactionStrategy):
+    """
+    Reverses the money/revenue side of an already-posted sale.
+
+    The stock quantity is restored by billing.ReturnService inside the same
+    outer database transaction.
+    """
+    def build(self, tenant, data):
+        invoice = data["invoice"]
+        amount = data["amount"]
+        payment_method = data.get("payment_method") or invoice.payment_method
+        return_number = data.get("return_number", "")
+
+        cash_or_bank = self._cash_or_bank(tenant, payment_method)
+        sales_revenue = AccountRepository.get_by_code(
+            tenant,
+            SystemAccountCodes.SALES_REVENUE,
+        )
+
+        lines = [
+            {
+                "account_id": sales_revenue.id,
+                "debit": amount,
+                "credit": 0,
+                "narration": f"Sales return {return_number}".strip(),
+            },
+            {
+                "account_id": cash_or_bank.id,
+                "debit": 0,
+                "credit": amount,
+                "narration": f"Refund via {payment_method}",
+            },
+        ]
+
+        return (
+            f"Sale Return - {return_number} / Invoice {invoice.invoice_number}",
+            lines,
+            invoice,
+        )
+
+
 class PurchaseStrategy(TransactionStrategy):
     def build(self, tenant, data):
         inventory = AccountRepository.get_by_code(tenant, SystemAccountCodes.INVENTORY)
@@ -147,6 +189,7 @@ class SupplierPaymentStrategy(TransactionStrategy):
 class TransactionStrategyFactory:
     _strategies = {
         "SALE": SaleStrategy(),
+        "SALE_RETURN": SaleReturnStrategy(),
         "PURCHASE": PurchaseStrategy(),
         "SUPPLIER_PAYMENT": SupplierPaymentStrategy(), 
         "OWNER_INVESTMENT": OwnerInvestmentStrategy(),
@@ -163,4 +206,3 @@ class TransactionStrategyFactory:
         if not strategy:
             raise AccountingException(f"Unsupported transaction_type: {transaction_type}")
         return strategy
-    

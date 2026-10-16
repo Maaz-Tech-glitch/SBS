@@ -29,3 +29,28 @@ class InsufficientStockException(InvoiceException):
 class EmptyInvoiceException(InvoiceException):
     status_code = 400
     message = "Invoice must contain at least one item"
+
+class SaleReturnException(InvoiceException):
+    status_code = 400
+    message = "Sale return error"
+
+
+class ReturnNotAllowedException(SaleReturnException):
+    status_code = 400
+    message = "Only completed invoices can be returned"
+
+
+class InvalidReturnQuantityException(SaleReturnException):
+    status_code = 400
+    message = "Invalid return quantity"
+
+
+class ReturnItemNotFoundException(SaleReturnException):
+    status_code = 400
+    message = "One or more selected invoice items are invalid"
+
+
+class ReturnRequestConflictException(SaleReturnException):
+    status_code = 409
+    message = "This return request ID is already being used for another invoice"
+
